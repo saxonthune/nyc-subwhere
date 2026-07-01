@@ -4,6 +4,8 @@
     "ignore": [
       "**/dist/**",
       "packages/web/src/assets/**",
+      "packages/worker/src/gtfs-proto.js",
+      "packages/worker/src/gtfs-proto.d.ts",
       "data/**",
       ".rhidoc.json"
     ]

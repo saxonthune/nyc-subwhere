@@ -5,7 +5,7 @@
 //
 // Invariant: this expresses resolved position-in-time, never raw feed mechanics
 // or how the worker derived anything. Every future worker — naive passthrough,
-// snapshot-diffing, schedule-fused — only improves the *quality* of `anchor`
+// snapshot-diffing, schedule-fused — only improves the *quality* of `lastKnownStop`
 // and `upcoming`, never their shape. That keeps the web app's interpolation
 // frozen as the worker gets cleverer.
 
@@ -27,7 +27,7 @@ export interface TripState {
   /** Where the Trip was last known to be — the stop *behind* its current
    *  segment. A resolved fact, not a prediction; the sink for all of the
    *  worker's present and future arrival-detection work. */
-  anchor: PositionAnchor;
+  lastKnownStop: LastKnownStop;
 
   /** Forward keyframes the web app interpolates across — the next N stops.
    *  N is the worker's choice (the render "runway"), bounded by the 30-min
@@ -43,7 +43,7 @@ export interface TripState {
 
 export type TripMotion = "progressing" | "stalled";
 
-export interface PositionAnchor {
+export interface LastKnownStop {
   stopId: string; // directional stop_id, e.g. "127N"
   /** When the Trip was at this stop (departed / observed). */
   at: EpochMs;
@@ -73,11 +73,16 @@ export interface StationProperties {
 export interface SegmentProperties {
   // A segment is one physical inter-station track, conflated across every Route
   // that runs it (doc02.05), so shared trunks draw once instead of stacking.
-  routes: string[]; // all routeIds on this track, sorted
-  // Distinct colors among those routes, sorted. NYC colors by trunk, so same-track
-  // routes usually share a color: 1 color -> solid line, 2+ -> candy-cane stripes.
-  colors: string[];
+  routes: string[]; // all routeIds on this track, sorted (for inspection/interaction)
   direction: Direction;
+  // Distinct colors among those routes, flattened into scalar props so MapLibre
+  // style expressions stay simple `get`s (array `at`/`length` on `get` fail the
+  // expression type-checker). NYC colors by trunk, so same-track routes usually
+  // share a color: colorCount 1 -> solid, 2 -> candy-cane, 3 -> Queens Blvd only.
+  colorCount: number;
+  color0: string;
+  color1: string; // "" when colorCount < 2
+  color2: string; // "" when colorCount < 3
 }
 
 export interface PointGeometry {

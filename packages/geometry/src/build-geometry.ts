@@ -289,7 +289,14 @@ function buildSegments(located: Located[], n: Normalized): SegmentCollection {
           (p) => [round6(p[0]), round6(p[1])] as LngLat,
         ),
       },
-      properties: { routes, colors, direction: pieces[0].direction },
+      properties: {
+        routes,
+        direction: pieces[0].direction,
+        colorCount: colors.length,
+        color0: colors[0],
+        color1: colors[1] ?? "",
+        color2: colors[2] ?? "",
+      },
     };
   });
   return { type: "FeatureCollection", features };
@@ -297,7 +304,10 @@ function buildSegments(located: Located[], n: Normalized): SegmentCollection {
 
 // ---------- Stage 4: linear-reference index (motion) ----------
 
-function buildTracks(located: Located[], feedVersion: string | null): TrackIndex {
+function buildTracks(
+  located: Located[],
+  feedVersion: string | null,
+): TrackIndex {
   const tracks: Track[] = located.map(({ canonical: c, cumDist, stops }) => ({
     routeId: c.routeId,
     direction: c.direction,

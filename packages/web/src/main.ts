@@ -37,25 +37,94 @@ map.on("load", () => {
   map.addSource("segments", { type: "geojson", data: segmentsUrl });
   map.addSource("stations", { type: "geojson", data: stationsUrl });
 
-  // Tron glow: a wide, blurred, low-opacity copy of each line under a crisp core.
+  // Semantic-zoom LOD (doc01.03): both directions share a corridor and coincide
+  // when zoomed out; line-offset fans them apart into parallel tracks as you zoom
+  // in. N/S shapes run antiparallel, so an equal offset pushes them to opposite
+  // sides. Applied identically to every line layer so stripes stay aligned.
+  const offset = [
+    "interpolate",
+    ["linear"],
+    ["zoom"],
+    11,
+    0,
+    13,
+    1.5,
+    16,
+    4,
+  ] as maplibregl.ExpressionSpecification;
+
+  // A conflated segment carries the distinct colors of every Route on it as flat
+  // props (doc02.05): color0 is the solid base, color1/color2 are stripes. NYC's
+  // per-trunk palette keeps this to 3 colors max, so base + two stripes suffice.
+
+  // Tron glow: a wide, blurred, low-opacity halo under the crisp base.
   map.addLayer({
     id: "route-glow",
     type: "line",
     source: "segments",
     layout: { "line-cap": "round", "line-join": "round" },
     paint: {
-      "line-color": ["get", "color"],
+      "line-color": ["get", "color0"],
       "line-width": 6,
       "line-blur": 6,
-      "line-opacity": 0.4,
+      "line-opacity": 0.35,
+      "line-offset": offset,
     },
   });
+  // Base: solid colors[0] on every segment (the only layer 1-color trunks need).
   map.addLayer({
-    id: "route-core",
+    id: "route-base",
     type: "line",
     source: "segments",
     layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": ["get", "color"], "line-width": 1.5 },
+    paint: {
+      "line-color": ["get", "color0"],
+      "line-width": 1.6,
+      "line-offset": offset,
+    },
+  });
+  // 2-color candy-cane: colors[1] dashed over the base → 50/50 stripes.
+  map.addLayer({
+    id: "route-stripe-2",
+    type: "line",
+    source: "segments",
+    filter: ["==", ["get", "colorCount"], 2],
+    layout: { "line-cap": "butt", "line-join": "round" },
+    paint: {
+      "line-color": ["get", "color1"],
+      "line-width": 1.6,
+      "line-dasharray": [2, 2],
+      "line-offset": offset,
+    },
+  });
+  // 3-color: colors[1] fills the first third, colors[2] the middle third (phase-
+  // shifted via a leading near-zero dash, since MapLibre has no dash offset), base
+  // shows through the last third.
+  map.addLayer({
+    id: "route-stripe-3a",
+    type: "line",
+    source: "segments",
+    filter: ["==", ["get", "colorCount"], 3],
+    layout: { "line-cap": "butt", "line-join": "round" },
+    paint: {
+      "line-color": ["get", "color1"],
+      "line-width": 1.6,
+      "line-dasharray": [2, 4],
+      "line-offset": offset,
+    },
+  });
+  map.addLayer({
+    id: "route-stripe-3b",
+    type: "line",
+    source: "segments",
+    filter: ["==", ["get", "colorCount"], 3],
+    layout: { "line-cap": "butt", "line-join": "round" },
+    paint: {
+      "line-color": ["get", "color2"],
+      "line-width": 1.6,
+      "line-dasharray": [0.01, 2, 2, 2],
+      "line-offset": offset,
+    },
   });
 
   map.addLayer({
