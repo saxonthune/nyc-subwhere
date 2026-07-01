@@ -1,8 +1,12 @@
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { RenderSnapshot, TrackIndex } from "@nyc-subwhere/contract";
 import segmentsUrl from "./assets/segments.geojson?url";
 import stationsUrl from "./assets/stations.geojson?url";
+import trackIndexUrl from "./assets/track-index.json?url";
+import { NetworkLayer } from "./network-layer";
 import { NETWORK_STYLE, directionOffset } from "./network-style";
+import { type TrainPose, indexTracks, poseForTrip } from "./trains";
 
 const container = document.getElementById("map");
 
@@ -15,8 +19,8 @@ if (!container) {
 const map = new maplibregl.Map({
   container,
   center: [-73.98, 40.75], // Manhattan
-  zoom: 11,
-  pitch: 0,
+  zoom: 15,
+  pitch: 55,
   style: {
     version: 8,
     sources: {},
@@ -34,7 +38,7 @@ map.addControl(new maplibregl.NavigationControl(), "top-right");
 
 // Static network geometry (doc02.05): route lines + station dots from the baked
 // GTFS assets. The Three.js train layer renders above these later (doc02.03).
-map.on("load", () => {
+map.on("load", async () => {
   map.addSource("segments", { type: "geojson", data: segmentsUrl });
   map.addSource("stations", { type: "geojson", data: stationsUrl });
 
@@ -131,4 +135,67 @@ map.on("load", () => {
       "circle-stroke-color": NETWORK_STYLE.station.strokeColor,
     },
   });
+
+  // 3D station pucks + platform boxes (doc02.03) in a Three.js custom layer above
+  // the flat network. Fetch the baked geometry once; it is static. Segments give
+  // each station's track bearing so its box lies parallel to the track.
+  const [stationsRes, segmentsRes] = await Promise.all([
+    fetch(stationsUrl),
+    fetch(segmentsUrl),
+  ]);
+  const stationsGeo = (await stationsRes.json()) as {
+    features: { geometry: { coordinates: [number, number] } }[];
+  };
+  const segmentsGeo = (await segmentsRes.json()) as {
+    features: {
+      geometry: { coordinates: [number, number][] };
+      properties: { color0: string; colors: string[] };
+    }[];
+  };
+  const lngLats = stationsGeo.features.map((f) => f.geometry.coordinates);
+  const segments = segmentsGeo.features.map((f) => ({
+    points: f.geometry.coordinates,
+    colors: f.properties.colors ?? [f.properties.color0],
+  }));
+  const networkLayer = new NetworkLayer(lngLats, segments);
+  map.addLayer(networkLayer);
+
+  // Live trains (doc02.04): poll the worker's render frame every ~30s, then each
+  // animation frame interpolate every Trip's Position Estimate along its baked
+  // Track by wall-clock time and hand the poses to the layer. clockSkew re-bases
+  // the local clock onto the worker's `asOf` so interpolation uses one timeline.
+  const trackIndex = (await (await fetch(trackIndexUrl)).json()) as TrackIndex;
+  const tracks = indexTracks(trackIndex);
+
+  let snapshot: RenderSnapshot | null = null;
+  let clockSkew = 0;
+
+  const poll = async () => {
+    try {
+      const res = await fetch("/api/trips");
+      if (!res.ok) {
+        console.warn(`/api/trips -> ${res.status}`);
+        return;
+      }
+      snapshot = (await res.json()) as RenderSnapshot;
+      clockSkew = snapshot.asOf - Date.now();
+    } catch (err) {
+      console.warn("trip poll failed", err);
+    }
+  };
+
+  const frame = () => {
+    if (snapshot) {
+      const now = Date.now() + clockSkew;
+      const poses = snapshot.trips
+        .map((t) => poseForTrip(t, tracks, now))
+        .filter((p): p is TrainPose => p !== null);
+      networkLayer.setTrains(poses);
+    }
+    requestAnimationFrame(frame);
+  };
+
+  await poll();
+  setInterval(poll, 30_000);
+  requestAnimationFrame(frame);
 });

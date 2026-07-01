@@ -4,6 +4,7 @@
     "ignore": [
       "**/dist/**",
       "packages/web/src/assets/**",
+      "packages/geometry/merge-report.json",
       "packages/worker/src/gtfs-proto.js",
       "packages/worker/src/gtfs-proto.d.ts",
       "data/**",

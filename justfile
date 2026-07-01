@@ -17,13 +17,26 @@ fetch-gtfs:
 gen-geometry:
     pnpm --filter @nyc-subwhere/geometry build-geometry
 
+# Query baked segments: near <lng,lat> [radiusM] | sep <selA> <selB> | diff
+inspect *ARGS:
+    node packages/geometry/scripts/inspect.mjs {{ARGS}}
+
 # Run the web app locally (Vite dev server, HMR)
 dev:
     pnpm --filter @nyc-subwhere/web dev
 
-# Run the Cloudflare Worker locally (serves /api; assets need `just build-web` first)
+# Run the Cloudflare Worker locally on :8788 (serves /api; ASSETS fallback needs `just build` first)
 worker:
     pnpm --filter @nyc-subwhere/worker dev
+
+# Run web dev server + Worker together (Ctrl-C stops both)
+dev-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trap 'kill 0' EXIT
+    just dev &
+    just worker &
+    wait
 
 # Build all packages
 build:

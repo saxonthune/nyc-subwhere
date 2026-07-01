@@ -75,10 +75,12 @@ export interface SegmentProperties {
   // that runs it (doc02.05), so shared trunks draw once instead of stacking.
   routes: string[]; // all routeIds on this track, sorted (for inspection/interaction)
   direction: Direction;
-  // Distinct colors among those routes, flattened into scalar props so MapLibre
-  // style expressions stay simple `get`s (array `at`/`length` on `get` fail the
-  // expression type-checker). NYC colors by trunk, so same-track routes usually
-  // share a color: colorCount 1 -> solid, 2 -> candy-cane, 3 -> Queens Blvd only.
+  // Every distinct color among those routes — the truth, uncapped (Flatbush
+  // carries 4). The renderer decides how to draw what it can (doc01.03).
+  colors: string[];
+  // The first three, flattened into scalar props so MapLibre style expressions
+  // stay simple `get`s (array `at`/`length` on `get` fail the expression
+  // type-checker). colorCount is the true count and may exceed 3.
   colorCount: number;
   color0: string;
   color1: string; // "" when colorCount < 2
