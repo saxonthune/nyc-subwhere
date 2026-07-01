@@ -1,0 +1,8 @@
+name = "nyc-subwhere"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+
+# ../web/dist is produced by @nyc-subwhere/web's build (vite build).
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
