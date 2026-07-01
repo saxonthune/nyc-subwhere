@@ -150,3 +150,6 @@ dist/
 # Raw MTA GTFS bundle — large + regenerable; derived assets in packages/web are committed (doc02.05)
 /data/
 
+# Intermediate pipeline artifacts for inspection — regenerated every build (doc02.05)
+/packages/geometry/debug/
+

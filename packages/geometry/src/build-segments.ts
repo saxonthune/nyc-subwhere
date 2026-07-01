@@ -31,7 +31,11 @@ const DIAMOND_EXPRESS = new Set(["6X", "7X", "FX"]);
 export function buildSegments(
   located: Located[],
   n: Normalized,
-): { collection: SegmentCollection; mergeReport: MergeReport } {
+): {
+  collection: SegmentCollection;
+  mergeReport: MergeReport;
+  preMerge: SegmentCollection;
+} {
   interface Piece {
     routeId: string;
     color: string;
@@ -67,9 +71,7 @@ export function buildSegments(
     coords: pieces[0].coords,
   }));
 
-  const { pieces: merged, report: mergeReport } = mergeParallelCorridors(keyed);
-
-  const features = merged.map((piece) => ({
+  const toFeature = (piece: SegmentPiece) => ({
     type: "Feature" as const,
     geometry: {
       type: "LineString" as const,
@@ -86,6 +88,18 @@ export function buildSegments(
       color1: piece.colors[1] ?? "",
       color2: piece.colors[2] ?? "",
     },
-  }));
-  return { collection: { type: "FeatureCollection", features }, mergeReport };
+  });
+
+  // Pre-merge pieces in the final segment schema, so `inspect --file` can diff
+  // what mergeParallelCorridors changed (doc02.05) without reconstruction.
+  const preMerge: SegmentCollection = {
+    type: "FeatureCollection",
+    features: keyed.map(toFeature),
+  };
+  const { pieces: merged, report: mergeReport } = mergeParallelCorridors(keyed);
+  const collection: SegmentCollection = {
+    type: "FeatureCollection",
+    features: merged.map(toFeature),
+  };
+  return { collection, mergeReport, preMerge };
 }

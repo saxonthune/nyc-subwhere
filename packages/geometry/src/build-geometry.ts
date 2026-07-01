@@ -31,6 +31,9 @@ const REPORT_PATH = path.join(
   "geometry",
   "merge-report.json",
 );
+// Gitignored intermediate artifacts, emitted every build in the segment schema
+// so `just inspect ... --file debug/<name>` reads them like the final output.
+const DEBUG_DIR = path.join(REPO_ROOT, "packages", "geometry", "debug");
 
 async function readCsv(name: string): Promise<Row[]> {
   const buf = await readFile(path.join(GTFS_DIR, name));
@@ -106,19 +109,50 @@ async function main(): Promise<void> {
   const canonical = selectCanonical(normalized);
   const located = canonical.map((c) => locateStops(c, normalized));
 
-  const { collection: segments, mergeReport } = buildSegments(
-    located,
-    normalized,
-  );
+  const {
+    collection: segments,
+    mergeReport,
+    preMerge,
+  } = buildSegments(located, normalized);
   const tracks = buildTracks(located, feedVersion);
   const stations = buildStations(canonical, normalized);
 
-  await mkdir(OUT_DIR, { recursive: true });
+  // Selected canonical shapes as inspectable LineStrings (routes/direction/
+  // colors so `inspect` reads them; shapeId/stops for coverage questions).
+  const canonicalFc = {
+    type: "FeatureCollection" as const,
+    features: canonical.map((c) => ({
+      type: "Feature" as const,
+      geometry: { type: "LineString" as const, coordinates: c.points },
+      properties: {
+        routes: [c.routeId],
+        direction: c.direction,
+        colors: [c.color],
+        colorCount: 1,
+        color0: c.color,
+        shapeId: c.shapeId,
+        stops: c.stopIds.length,
+      },
+    })),
+  };
+
+  await Promise.all([
+    mkdir(OUT_DIR, { recursive: true }),
+    mkdir(DEBUG_DIR, { recursive: true }),
+  ]);
   await Promise.all([
     writeFile(path.join(OUT_DIR, "segments.geojson"), JSON.stringify(segments)),
     writeFile(path.join(OUT_DIR, "stations.geojson"), JSON.stringify(stations)),
     writeFile(path.join(OUT_DIR, "track-index.json"), JSON.stringify(tracks)),
     writeFile(REPORT_PATH, JSON.stringify(mergeReport, null, 2)),
+    writeFile(
+      path.join(DEBUG_DIR, "canonical.geojson"),
+      JSON.stringify(canonicalFc),
+    ),
+    writeFile(
+      path.join(DEBUG_DIR, "pre-merge-segments.geojson"),
+      JSON.stringify(preMerge),
+    ),
   ]);
 
   console.log(

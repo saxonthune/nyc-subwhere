@@ -1,10 +1,16 @@
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { RenderSnapshot, TrackIndex } from "@nyc-subwhere/contract";
+import type {
+  RenderSnapshot,
+  SegmentProperties,
+  StationProperties,
+  TrackIndex,
+} from "@nyc-subwhere/contract";
 import segmentsUrl from "./assets/segments.geojson?url";
 import stationsUrl from "./assets/stations.geojson?url";
 import trackIndexUrl from "./assets/track-index.json?url";
-import { NetworkLayer } from "./network-layer";
+import { InspectorPanel, type InspectorTarget } from "./inspector-panel";
+import { NetworkLayer, type PickResult } from "./network-layer";
 import { NETWORK_STYLE, directionOffset } from "./network-style";
 import { StatsPanel } from "./stats-panel";
 import { type TrainPose, indexTracks, resolveTrip } from "./trains";
@@ -145,12 +151,15 @@ map.on("load", async () => {
     fetch(segmentsUrl),
   ]);
   const stationsGeo = (await stationsRes.json()) as {
-    features: { geometry: { coordinates: [number, number] } }[];
+    features: {
+      geometry: { coordinates: [number, number] };
+      properties: StationProperties;
+    }[];
   };
   const segmentsGeo = (await segmentsRes.json()) as {
     features: {
       geometry: { coordinates: [number, number][] };
-      properties: { color0: string; colors: string[] };
+      properties: SegmentProperties;
     }[];
   };
   const lngLats = stationsGeo.features.map((f) => f.geometry.coordinates);
@@ -162,6 +171,14 @@ map.on("load", async () => {
   map.addLayer(networkLayer);
   const statsPanel = new StatsPanel();
 
+  // Inspector (doc01.03): station and segment metadata parallel the arrays handed
+  // to the layer, so a PickResult's index reads straight back to props here; a
+  // train pick carries its tripId, resolved against the live snapshot below.
+  const inspector = new InspectorPanel();
+  document.body.appendChild(inspector);
+  const stationProps = stationsGeo.features.map((f) => f.properties);
+  const segmentProps = segmentsGeo.features.map((f) => f.properties);
+
   // Live trains (doc02.04): poll the worker's render frame every ~30s, then each
   // animation frame interpolate every Trip's Position Estimate along its baked
   // Track by wall-clock time and hand the poses to the layer. clockSkew re-bases
@@ -171,6 +188,49 @@ map.on("load", async () => {
 
   let snapshot: RenderSnapshot | null = null;
   let clockSkew = 0;
+
+  // Resolve a geometric pick into the raw contract data used to render it: the
+  // baked StationProperties / SegmentProperties for a station or segment, and the
+  // live TripState plus its computed pose for a train (doc01.03).
+  const toTarget = (r: PickResult): InspectorTarget | null => {
+    if (r.kind === "station") {
+      const p = stationProps[r.stationIndex];
+      return p
+        ? {
+            kind: "station",
+            title: p.name,
+            data: { stationIndex: r.stationIndex, properties: p },
+          }
+        : null;
+    }
+    if (r.kind === "segment") {
+      const p = segmentProps[r.segmentIndex];
+      if (!p) return null;
+      const coords = segmentsGeo.features[r.segmentIndex]?.geometry.coordinates;
+      return {
+        kind: "segment",
+        title: `Track segment · ${p.routes.join("/")} ${p.direction}`,
+        data: {
+          segmentIndex: r.segmentIndex,
+          properties: p,
+          pointCount: coords?.length ?? 0,
+        },
+      };
+    }
+    const trip = snapshot?.trips.find((t) => t.tripId === r.tripId);
+    if (!trip) return null;
+    const res = resolveTrip(trip, tracks, Date.now() + clockSkew);
+    return {
+      kind: "train",
+      title: `${trip.routeId} train · ${trip.tripId}`,
+      data: { trip, pose: res.ok ? res.pose : null },
+    };
+  };
+
+  map.on("click", (e) => {
+    const r = networkLayer.pick(e.point);
+    inspector.target = r ? toTarget(r) : null;
+  });
 
   const poll = async () => {
     try {

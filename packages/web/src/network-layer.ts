@@ -14,6 +14,19 @@ type Segment = { points: LngLat[]; colors: string[] };
 // the vertical axis so the platform box lies parallel to the track.
 type Placement = { x: number; z: number; angleY: number };
 
+// A geometric hit, resolved to the index/id the caller keyed its metadata by
+// (doc01.03). This layer stays free of Trip/Station semantics: main.ts turns a
+// PickResult into an inspector target from its own baked props + live snapshot.
+export type PickResult =
+  | { kind: "segment"; segmentIndex: number }
+  | { kind: "station"; stationIndex: number }
+  | { kind: "train"; tripId: string };
+
+// Tubes for one color are merged into a single non-indexed mesh, so a raycast
+// hit gives a faceIndex, not a segment. This maps face ranges back: triStart[i]
+// is the first triangle of segIds[i]'s slice within the merged geometry.
+type FaceMap = { triStart: number[]; segIds: number[] };
+
 // A single MapLibre custom layer that renders the whole static network in 3D in
 // one shared Three.js scene (doc02.03): route lines as merged tubes, stations as
 // an instanced "puck" disc above an instanced grey platform box oriented along
@@ -41,6 +54,9 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private trains?: THREE.InstancedMesh;
   private trainGlow?: THREE.InstancedMesh;
   private trainCapacity = 0;
+  private tubeMeshes: THREE.Mesh[] = [];
+  private currentPoses: TrainPose[] = [];
+  private readonly raycaster = new THREE.Raycaster();
 
   private readonly origin = maplibregl.MercatorCoordinate.fromLngLat(
     [-73.98, 40.75],
@@ -85,9 +101,12 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     key.position.set(0.5, 1, 0.3);
     this.scene.add(key);
 
-    for (const mesh of this.buildTubes()) this.scene.add(mesh);
+    this.tubeMeshes = this.buildTubes();
+    for (const mesh of this.tubeMeshes) this.scene.add(mesh);
     this.pucks = this.buildPucks();
     this.boxes = this.buildBoxes();
+    this.pucks.userData.kind = "station";
+    this.boxes.userData.kind = "station";
     this.scene.add(this.pucks, this.boxes);
 
     this.renderer = new THREE.WebGLRenderer({
@@ -104,6 +123,40 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   onRemove() {
     this.map.off("zoom", this.syncZoom);
     this.renderer.dispose();
+  }
+
+  // Raycast the scene at a screen point (doc01.03). The camera's projectionMatrix
+  // already folds in the local->clip transform render() composes each frame, so
+  // its inverse maps a clip-space near/far pair straight into the mesh's meter
+  // frame — no view matrix to undo. Nearest hit wins; invisible meshes (a puck
+  // faded out at high zoom, a box hidden when zoomed out) are skipped by three.
+  pick(point: { x: number; y: number }): PickResult | null {
+    const canvas = this.map.getCanvas();
+    const ndcX = (point.x / canvas.clientWidth) * 2 - 1;
+    const ndcY = -(point.y / canvas.clientHeight) * 2 + 1;
+    const inv = this.camera.projectionMatrix.clone().invert();
+    const near = new THREE.Vector3(ndcX, ndcY, -1).applyMatrix4(inv);
+    const far = new THREE.Vector3(ndcX, ndcY, 1).applyMatrix4(inv);
+    this.raycaster.set(near, far.sub(near).normalize());
+
+    const targets: THREE.Object3D[] = [...this.tubeMeshes];
+    if (this.pucks) targets.push(this.pucks);
+    if (this.boxes) targets.push(this.boxes);
+    if (this.trains) targets.push(this.trains);
+
+    for (const hit of this.raycaster.intersectObjects(targets, false)) {
+      const kind = hit.object.userData.kind;
+      if (kind === "train" && hit.instanceId != null) {
+        const pose = this.currentPoses[hit.instanceId];
+        if (pose) return { kind: "train", tripId: pose.tripId };
+      } else if (kind === "station" && hit.instanceId != null) {
+        return { kind: "station", stationIndex: hit.instanceId };
+      } else if (kind === "segment" && hit.faceIndex != null) {
+        const seg = segmentOfFace(hit.object.userData.faceMap, hit.faceIndex);
+        if (seg != null) return { kind: "segment", segmentIndex: seg };
+      }
+    }
+    return null;
   }
 
   render(
@@ -135,21 +188,24 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   // color, so every mesh still carries just one solid color.
   private buildTubes(): THREE.Mesh[] {
     const { tube } = NETWORK_STYLE;
-    const byColor = new Map<string, THREE.BufferGeometry[]>();
-    const push = (color: string, geo: THREE.BufferGeometry) => {
+    // Each entry keeps its owning segment index so the merged mesh can map a
+    // raycast faceIndex back to a segment for the inspector (doc01.03).
+    type Entry = { geo: THREE.BufferGeometry; seg: number };
+    const byColor = new Map<string, Entry[]>();
+    const push = (color: string, geo: THREE.BufferGeometry, seg: number) => {
       const bucket = byColor.get(color);
-      if (bucket) bucket.push(geo);
-      else byColor.set(color, [geo]);
+      if (bucket) bucket.push({ geo, seg });
+      else byColor.set(color, [{ geo, seg }]);
     };
 
-    for (const seg of this.segments) {
+    this.segments.forEach((seg, si) => {
       // CatmullRomCurve3 degenerates on repeated points (677/892 baked segments
       // carry consecutive duplicates); drop them so the frame stays defined.
-      const pts = dedupeConsecutive(seg.points).map((p) => {
-        const { x, z } = this.toLocal(p);
-        return new THREE.Vector3(x, tube.radius, z);
-      });
-      if (pts.length < 2) continue;
+      const local = dedupeConsecutive(seg.points).map((p) => this.toLocal(p));
+      if (local.length < 2) return;
+      const pts = offsetLeft(local, tube.sideOffsetM).map(
+        ({ x, z }) => new THREE.Vector3(x, tube.radius, z),
+      );
       const curve = new THREE.CatmullRomCurve3(pts);
       const tubular = Math.min(400, Math.max(4, pts.length));
       const geo = new THREE.TubeGeometry(
@@ -167,8 +223,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
         geo.deleteAttribute("uv");
         const solid = geo.toNonIndexed();
         geo.dispose();
-        push(seg.colors[0] ?? "#ffffff", solid);
-        continue;
+        push(seg.colors[0] ?? "#ffffff", solid, si);
+        return;
       }
       for (const [color, sub] of bandTube(
         geo,
@@ -176,21 +232,36 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
         tubular,
         seg.colors,
       )) {
-        push(color, sub);
+        push(color, sub, si);
       }
       geo.dispose();
-    }
+    });
 
     const meshes: THREE.Mesh[] = [];
-    for (const [color, geos] of byColor) {
-      const merged = mergeGeometries(geos, false);
-      for (const g of geos) g.dispose();
+    for (const [color, entries] of byColor) {
+      // mergeGeometries concatenates in push order (useGroups=false), so the
+      // running triangle count gives each entry's face range in the merged mesh.
+      const faceMap: FaceMap = { triStart: [], segIds: [] };
+      let tri = 0;
+      for (const e of entries) {
+        faceMap.triStart.push(tri);
+        faceMap.segIds.push(e.seg);
+        tri += e.geo.getAttribute("position").count / 3;
+      }
+      const merged = mergeGeometries(
+        entries.map((e) => e.geo),
+        false,
+      );
+      for (const e of entries) e.geo.dispose();
       const mat = new THREE.MeshStandardMaterial({
         color,
         emissive: new THREE.Color(color),
         emissiveIntensity: tube.emissiveIntensity,
       });
-      meshes.push(new THREE.Mesh(merged, mat));
+      const mesh = new THREE.Mesh(merged, mat);
+      mesh.userData.kind = "segment";
+      mesh.userData.faceMap = faceMap;
+      meshes.push(mesh);
     }
     return meshes;
   }
@@ -253,6 +324,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     if (!this.trains || !this.trainGlow || poses.length > this.trainCapacity) {
       this.rebuildTrains(Math.max(64, poses.length));
     }
+    this.currentPoses = poses;
     const core = this.trains;
     const glow = this.trainGlow;
     if (!core || !glow) return;
@@ -305,6 +377,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       capacity,
     );
     core.frustumCulled = false;
+    core.userData.kind = "train";
 
     // Glow: a larger additive-blended shell around the core. On the black
     // background additive blending fakes a cheap bloom halo, lifting the train
@@ -379,6 +452,28 @@ function bearingAt(station: LngLat, lines: LngLat[][]): LngLat | null {
   return dir;
 }
 
+// Largest triStart[i] <= faceIndex gives the segment owning that triangle.
+function segmentOfFace(
+  map: FaceMap | undefined,
+  faceIndex: number,
+): number | null {
+  if (!map) return null;
+  const { triStart, segIds } = map;
+  let lo = 0;
+  let hi = triStart.length - 1;
+  let ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (triStart[mid] <= faceIndex) {
+      ans = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return ans >= 0 ? segIds[ans] : null;
+}
+
 function sqDist(a: LngLat, b: LngLat): number {
   const dx = a[0] - b[0];
   const dy = a[1] - b[1];
@@ -390,6 +485,26 @@ function dedupeConsecutive(points: LngLat[]): LngLat[] {
   for (const p of points) {
     const last = out[out.length - 1];
     if (!last || last[0] !== p[0] || last[1] !== p[1]) out.push(p);
+  }
+  return out;
+}
+
+// Shift every vertex `d` meters to the left of the local travel direction (the
+// central-difference tangent), in the meter-scaled local frame. Antiparallel N/S
+// shapes get opposite tangents, so the same shift separates them.
+function offsetLeft(
+  pts: { x: number; z: number }[],
+  d: number,
+): { x: number; z: number }[] {
+  const out: { x: number; z: number }[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(pts.length - 1, i + 1)];
+    const tx = b.x - a.x;
+    const tz = b.z - a.z;
+    const len = Math.hypot(tx, tz) || 1;
+    // Left-hand perpendicular (-tz, tx) of the unit tangent.
+    out.push({ x: pts[i].x + (-tz / len) * d, z: pts[i].z + (tx / len) * d });
   }
   return out;
 }

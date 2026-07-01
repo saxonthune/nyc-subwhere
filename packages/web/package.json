@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@nyc-subwhere/contract": "workspace:*",
+    "lit": "^3.2.1",
     "maplibre-gl": "^4.7.1",
     "three": "^0.171.0"
   },

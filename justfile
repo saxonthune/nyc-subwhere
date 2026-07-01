@@ -17,9 +17,13 @@ fetch-gtfs:
 gen-geometry:
     pnpm --filter @nyc-subwhere/geometry build-geometry
 
-# Query baked segments: near <lng,lat> [radiusM] | sep <selA> <selB> | diff
+# Query baked segments: near <lng,lat> [radiusM] | sep <selA> <selB> | diff | lint | overlap
 inspect *ARGS:
     node packages/geometry/scripts/inspect.mjs {{ARGS}}
+
+# Check every baked segment renders a valid tube (no NaN / merge failures)
+tube-check:
+    node packages/web/scripts/tube-check.mjs
 
 # Run the web app locally (Vite dev server, HMR)
 dev:

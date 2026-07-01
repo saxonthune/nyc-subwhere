@@ -37,6 +37,10 @@ const CORRIDOR_MIN_LINK_M = 50; // min matched length to union two sub-pieces
 // so its median lands around ε/2 ≈ 15 m. Alignments that truly coincide
 // (Hoyt, CPW, QBL, J/M/Z) all measure ≤ ~5 m.
 const CORRIDOR_MAX_MEDIAN_SEP_M = 6;
+// When choosing which of a group's coincident members to draw, a member counts
+// as redundant if this fraction of it is covered by others — high enough that a
+// genuine unique tail survives, low enough to absorb cut-rounding at the ends.
+const CORRIDOR_COVER_FRAC = 0.9;
 
 // The unit the pass consumes and produces: one drawable polyline with the
 // routes/colors that run it. build-segments.ts emits these as features.
@@ -233,8 +237,15 @@ export function mergeParallelCorridors(pieces: SegmentPiece[]): {
     parent[find(a)] = find(b);
   }
 
-  // 7. Emit: longest member's polyline represents the group; routes/colors are
-  //    the union across members. Singletons pass through (uncut ones verbatim).
+  // 7. Emit: keep the member polylines that preserve the group's detail; their
+  //    routes/colors are the union across all members. A group's members all
+  //    trace the same shared ground, so emitting one representative used to pick
+  //    the longest — which silently dropped finer geometry when a coarse chord
+  //    (e.g. an express shape skipping a local stop) spanned two local hops that
+  //    carry the intermediate station, orphaning it. Instead, drop coarsest-first
+  //    any member whose ground the others still cover: co-extensive duplicates
+  //    collapse to one (the stripe case), but a spanning chord yields to the finer
+  //    hops it subdivides. Singletons pass through (uncut ones verbatim).
   const groups = new Map<number, number[]>();
   subs.forEach((_, id) => {
     const root = find(id);
@@ -253,36 +264,140 @@ export function mergeParallelCorridors(pieces: SegmentPiece[]): {
   }
 
   const round1 = (v: number) => Math.round(v * 10) / 10;
-  const out: SegmentPiece[] = [];
-  const groupReports: MergeGroupReport[] = [];
-  for (const [root, members] of groups) {
-    const rep = members.reduce((best, id) =>
-      subs[id].a1 - subs[id].a0 > subs[best].a1 - subs[best].a0 ? id : best,
-    );
-    const { piece: pi, a0, a1 } = subs[rep];
+
+  const memberCoords = (id: number): LngLat[] => {
+    const { piece: pi, a0, a1 } = subs[id];
     const p = pieces[pi];
-    const whole = members.length === 1 && a0 === 0 && a1 === totals[pi];
-    const coords = whole
+    return a0 === 0 && a1 === totals[pi]
       ? p.coords
       : (lineSliceAlong(lineString(p.coords), a0 / 1000, a1 / 1000, {
           units: "kilometers",
         }).geometry.coordinates as LngLat[]);
+  };
+  // Even samples of a polyline in projected meters, for the coverage test.
+  const sampleCoords = (coords: LngLat[]): [number, number][] => {
+    const proj = coords.map(projectNyc);
+    const out: [number, number][] = [];
+    for (let k = 0; k < proj.length - 1; k++) {
+      const [ax, ay] = proj[k];
+      const [bx, by] = proj[k + 1];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const n = Math.max(1, Math.round(Math.hypot(dx, dy) / CORRIDOR_STEP_M));
+      for (let s = 0; s < n; s++) {
+        const t = s / n;
+        out.push([ax + dx * t, ay + dy * t]);
+      }
+    }
+    const last = proj[proj.length - 1];
+    if (last) out.push([last[0], last[1]]);
+    return out;
+  };
+  // Fraction of m's samples within ε of some sample among others.
+  const coverFrac = (
+    m: [number, number][],
+    others: [number, number][][],
+  ): number => {
+    if (m.length === 0) return 1;
+    const g = new Map<string, [number, number][]>();
+    for (const set of others)
+      for (const q of set) {
+        const key = `${cell(q[0])}:${cell(q[1])}`;
+        (g.get(key) ?? g.set(key, []).get(key))?.push(q);
+      }
+    let covered = 0;
+    for (const p of m) {
+      const cx = cell(p[0]);
+      const cy = cell(p[1]);
+      let hit = false;
+      for (let gx = cx - 1; gx <= cx + 1 && !hit; gx++)
+        for (let gy = cy - 1; gy <= cy + 1 && !hit; gy++)
+          for (const q of g.get(`${gx}:${gy}`) ?? []) {
+            if (
+              (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2 <=
+              CORRIDOR_EPS_M ** 2
+            ) {
+              hit = true;
+              break;
+            }
+          }
+      if (hit) covered++;
+    }
+    return covered / m.length;
+  };
+
+  const out: SegmentPiece[] = [];
+  const groupReports: MergeGroupReport[] = [];
+  for (const [root, members] of groups) {
     const routes = [
       ...new Set(members.flatMap((id) => pieces[subs[id].piece].routes)),
     ].sort();
     const colors = [
       ...new Set(members.flatMap((id) => pieces[subs[id].piece].colors)),
     ].sort();
-    out.push({ routes, colors, direction: p.direction, coords });
+
+    const coordsOf = new Map<number, LngLat[]>();
+    const samplesOf = new Map<number, [number, number][]>();
+    for (const id of members) {
+      const c = memberCoords(id);
+      coordsOf.set(id, c);
+      samplesOf.set(id, sampleCoords(c));
+    }
+    const samplesFor = (id: number) => samplesOf.get(id) as [number, number][];
+    const arcLen = (id: number) => subs[id].a1 - subs[id].a0;
+    const density = (id: number) =>
+      (coordsOf.get(id)?.length ?? 0) / Math.max(1, arcLen(id));
+
+    // Phase A — collapse members that trace the same run to one. Two members
+    // that mutually cover each other are the same shared ground drawn twice (the
+    // stripe case: the G sub and the A/C sub over Hoyt), differing only by cut
+    // rounding at the ends. Keep the longest; a later equivalent is dropped.
+    const reps: number[] = [];
+    const byLongest = [...members].sort(
+      (a, b) => arcLen(b) - arcLen(a) || density(b) - density(a),
+    );
+    for (const id of byLongest) {
+      const dup = reps.some(
+        (r) =>
+          coverFrac(samplesFor(id), [samplesFor(r)]) >= CORRIDOR_COVER_FRAC &&
+          coverFrac(samplesFor(r), [samplesFor(id)]) >= CORRIDOR_COVER_FRAC,
+      );
+      if (!dup) reps.push(id);
+    }
+
+    // Phase B — drop a rep whose ground the *union* of the others still covers,
+    // even though no single other does: a coarse chord spanning several finer
+    // hops (an express shape skipping a local stop) yields to those hops so their
+    // intermediate station keeps its geometry. Coarsest-first so the chord goes,
+    // not the detail.
+    const kept = new Set(reps);
+    for (const id of [...reps].sort((a, b) => density(a) - density(b))) {
+      if (kept.size <= 1) break;
+      const others = [...kept].filter((x) => x !== id).map(samplesFor);
+      if (coverFrac(samplesFor(id), others) >= CORRIDOR_COVER_FRAC)
+        kept.delete(id);
+    }
+
+    for (const id of kept)
+      out.push({
+        routes,
+        colors,
+        direction: pieces[subs[id].piece].direction,
+        coords: coordsOf.get(id) as LngLat[],
+      });
 
     if (members.length < 2) continue;
     const dists = (distsByRoot.get(root) ?? []).sort((a, b) => a - b);
-    const midPt = coords[Math.floor(coords.length / 2)];
+    const repId = [...kept].reduce((best, id) =>
+      subs[id].a1 - subs[id].a0 > subs[best].a1 - subs[best].a0 ? id : best,
+    );
+    const repCoords = coordsOf.get(repId) as LngLat[];
+    const midPt = repCoords[Math.floor(repCoords.length / 2)];
     groupReports.push({
       routes,
-      direction: p.direction,
+      direction: pieces[subs[repId].piece].direction,
       colors,
-      lengthM: Math.round(a1 - a0),
+      lengthM: Math.round(subs[repId].a1 - subs[repId].a0),
       mid: [round6(midPt[0]), round6(midPt[1])],
       members: members.map((id) => ({
         routes: pieces[subs[id].piece].routes,

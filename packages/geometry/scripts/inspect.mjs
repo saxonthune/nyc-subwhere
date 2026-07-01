@@ -17,6 +17,16 @@
 //       Geometry hygiene: features with consecutive duplicate vertices (these
 //       break downstream consumers that need nonzero tangents, e.g. tube
 //       renderers), summarized per route combination.
+//
+//   inspect overlap [--near lng,lat[,radiusM]] [--eps 8] [--minlen 40] [--file F]
+//       Pairs of features whose geometry runs coincident (within eps) for at
+//       least minlen meters — i.e. two tubes drawn on top of each other. Reports
+//       the coincident length per pair, longest first.
+//
+//   inspect coords <selector> [--near lng,lat[,radiusM]] [--file F]
+//       Dump every vertex of each matching feature, with the segment length
+//       between consecutive vertices — to see coarse chords and where a tube
+//       actually runs. Selector syntax as in `sep`.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -64,6 +74,7 @@ const describe = (f) => {
   return (
     `${p.routes.join("/").padEnd(16)} (${p.direction}) ` +
     `${Math.round(lengthOf(f.geometry.coordinates)).toString().padStart(5)}m` +
+    `  pts=${f.geometry.coordinates.length.toString().padStart(3)}` +
     `  colors=${p.colorCount}  mid=${midOf(f)}`
   );
 };
@@ -221,9 +232,89 @@ switch (cmd) {
     break;
   }
 
+  case "overlap": {
+    const eps = Number(flags.eps ?? 8);
+    const minLen = Number(flags.minlen ?? 40);
+    const step = 10;
+    const feats = load(flags.file).features.filter(nearFilter(flags.near));
+    const samples = feats.map((f) => densify(f.geometry.coordinates, step));
+
+    const cell = (v) => Math.floor(v / eps);
+    const key = (p) => `${cell(p[0] * 85000)}:${cell(p[1] * 111000)}`;
+    const grid = new Map();
+    samples.forEach((pts, fi) => {
+      for (const p of pts) {
+        const k = key(p);
+        (grid.get(k) ?? grid.set(k, []).get(k)).push([p, fi]);
+      }
+    });
+
+    // For each feature's samples, tally which *other* features run within eps.
+    // Each coincident sample ≈ step meters; the pair accumulates from both
+    // members' samples, so coincident length ≈ tally · step / 2.
+    const pair = new Map();
+    samples.forEach((pts, fi) => {
+      for (const p of pts) {
+        const cx = cell(p[0] * 85000);
+        const cy = cell(p[1] * 111000);
+        const near = new Set();
+        for (let gx = cx - 1; gx <= cx + 1; gx++)
+          for (let gy = cy - 1; gy <= cy + 1; gy++)
+            for (const [q, fj] of grid.get(`${gx}:${gy}`) ?? []) {
+              if (fj !== fi && hav(p, q) < eps) near.add(fj);
+            }
+        for (const fj of near) {
+          const kk = fi < fj ? `${fi}:${fj}` : `${fj}:${fi}`;
+          pair.set(kk, (pair.get(kk) ?? 0) + 1);
+        }
+      }
+    });
+
+    const rows = [...pair.entries()]
+      .map(([kk, n]) => {
+        const [fi, fj] = kk.split(":").map(Number);
+        return { fi, fj, len: Math.round((n * step) / 2) };
+      })
+      .filter((r) => r.len >= minLen)
+      .sort((a, b) => b.len - a.len);
+
+    for (const r of rows) {
+      const a = feats[r.fi].properties;
+      const b = feats[r.fj].properties;
+      console.log(
+        `${String(r.len).padStart(5)}m  ` +
+          `${a.routes.join("/")}(${a.direction})  ≈  ${b.routes.join("/")}(${b.direction})`,
+      );
+    }
+    console.log(
+      `${rows.length} overlapping pairs (eps=${eps}m, minlen=${minLen}m)`,
+    );
+    break;
+  }
+
+  case "coords": {
+    const sel = selector(rest[0]);
+    const feats = load(flags.file)
+      .features.filter(nearFilter(flags.near))
+      .filter(sel);
+    for (const f of feats) {
+      console.log(describe(f));
+      const c = f.geometry.coordinates;
+      for (let i = 0; i < c.length; i++) {
+        const seg = i === 0 ? 0 : hav(c[i - 1], c[i]);
+        console.log(
+          `  ${String(i).padStart(3)}  ${c[i][0].toFixed(5)},${c[i][1].toFixed(5)}` +
+            (i === 0 ? "" : `   +${Math.round(seg)}m`),
+        );
+      }
+    }
+    console.log(`${feats.length} features`);
+    break;
+  }
+
   default:
     console.error(
-      "usage: inspect near|sep|diff|lint  (see header of inspect.mjs)",
+      "usage: inspect near|sep|diff|lint|overlap|coords  (see header of inspect.mjs)",
     );
     process.exit(1);
 }

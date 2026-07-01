@@ -68,6 +68,11 @@ export const NETWORK_STYLE = {
     radius: 11,
     radialSegments: 6,
     emissiveIntensity: 0.5,
+    // Every tube shifts this many meters to the left of its own travel direction.
+    // N and S shapes run antiparallel along the same alignment, so an equal shift
+    // pushes them to opposite sides — parallel tracks (doc01.03) instead of two
+    // tubes fighting on one centerline. ~radius apart leaves a clean gap.
+    sideOffsetM: 13,
     // Candy-cane banding for multi-color trunks: each color paints one
     // arc-length band along the tube, cycling through the trunk's colors. The
     // band boundary is cut on a slant (advanced on one flank, retreated on the

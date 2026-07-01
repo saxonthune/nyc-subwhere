@@ -12,6 +12,14 @@ the app does and *why*, not how — the interpolation math and late-detection
 algorithm live in code and in the render contract (`@nyc-subwhere/contract`,
 doc02.04), not here. Terms are the glossary's (doc01.01).
 
+## Granularity
+
+These behaviors are declarative but not an exhaustive requirements inventory. State
+that the Board does a thing and why; do not enumerate every field, case, or detail
+an implementation must satisfy — for instance, a behavior says the inspector reveals
+a Station's details, not which specific details it lists. Spelling out every
+particular is how the prose drifts out of step with the code.
+
 ## Rendering
 
 - The Board shall render every live Trip as a train drawn along its Route.
@@ -114,6 +122,18 @@ platform.
 
 - When a rider selects a train, the Board shall present that Trip's Route,
   direction, destination, and next-Station arrival.
+
+## Inspector
+
+- When a developer clicks a Station's geometry — its puck or platform box — or a
+  Route line Segment, the Board shall present a modal inspector panel in the lower
+  part of the screen, carrying information sensitive to what was clicked.
+- Where the clicked object is a Route line Segment, the inspector shall present
+  information about that Segment.
+- Where the clicked object is a Station platform, the inspector shall present
+  information about that platform.
+- Where the clicked object is a train, the inspector shall present information about
+  that Trip.
 
 ## Advanced Stats
 
