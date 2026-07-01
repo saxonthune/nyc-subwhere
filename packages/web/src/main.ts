@@ -2,6 +2,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import segmentsUrl from "./assets/segments.geojson?url";
 import stationsUrl from "./assets/stations.geojson?url";
+import { NETWORK_STYLE, directionOffset } from "./network-style";
 
 const container = document.getElementById("map");
 
@@ -41,17 +42,9 @@ map.on("load", () => {
   // when zoomed out; line-offset fans them apart into parallel tracks as you zoom
   // in. N/S shapes run antiparallel, so an equal offset pushes them to opposite
   // sides. Applied identically to every line layer so stripes stay aligned.
-  const offset = [
-    "interpolate",
-    ["linear"],
-    ["zoom"],
-    11,
-    0,
-    13,
-    1.5,
-    16,
-    4,
-  ] as maplibregl.ExpressionSpecification;
+  // Breakpoints live in network-style.ts (retuned often).
+  const offset = directionOffset();
+  const width = NETWORK_STYLE.lineWidth;
 
   // A conflated segment carries the distinct colors of every Route on it as flat
   // props (doc02.05): color0 is the solid base, color1/color2 are stripes. NYC's
@@ -65,9 +58,9 @@ map.on("load", () => {
     layout: { "line-cap": "round", "line-join": "round" },
     paint: {
       "line-color": ["get", "color0"],
-      "line-width": 6,
-      "line-blur": 6,
-      "line-opacity": 0.35,
+      "line-width": NETWORK_STYLE.glow.width,
+      "line-blur": NETWORK_STYLE.glow.blur,
+      "line-opacity": NETWORK_STYLE.glow.opacity,
       "line-offset": offset,
     },
   });
@@ -79,7 +72,7 @@ map.on("load", () => {
     layout: { "line-cap": "round", "line-join": "round" },
     paint: {
       "line-color": ["get", "color0"],
-      "line-width": 1.6,
+      "line-width": width,
       "line-offset": offset,
     },
   });
@@ -92,8 +85,8 @@ map.on("load", () => {
     layout: { "line-cap": "butt", "line-join": "round" },
     paint: {
       "line-color": ["get", "color1"],
-      "line-width": 1.6,
-      "line-dasharray": [2, 2],
+      "line-width": width,
+      "line-dasharray": NETWORK_STYLE.dash2,
       "line-offset": offset,
     },
   });
@@ -108,8 +101,8 @@ map.on("load", () => {
     layout: { "line-cap": "butt", "line-join": "round" },
     paint: {
       "line-color": ["get", "color1"],
-      "line-width": 1.6,
-      "line-dasharray": [2, 4],
+      "line-width": width,
+      "line-dasharray": NETWORK_STYLE.dash3a,
       "line-offset": offset,
     },
   });
@@ -121,8 +114,8 @@ map.on("load", () => {
     layout: { "line-cap": "butt", "line-join": "round" },
     paint: {
       "line-color": ["get", "color2"],
-      "line-width": 1.6,
-      "line-dasharray": [0.01, 2, 2, 2],
+      "line-width": width,
+      "line-dasharray": NETWORK_STYLE.dash3b,
       "line-offset": offset,
     },
   });
@@ -132,10 +125,10 @@ map.on("load", () => {
     type: "circle",
     source: "stations",
     paint: {
-      "circle-radius": 3,
-      "circle-color": "#ffffff",
-      "circle-stroke-width": 1,
-      "circle-stroke-color": "#000000",
+      "circle-radius": NETWORK_STYLE.station.radius,
+      "circle-color": NETWORK_STYLE.station.color,
+      "circle-stroke-width": NETWORK_STYLE.station.strokeWidth,
+      "circle-stroke-color": NETWORK_STYLE.station.strokeColor,
     },
   });
 });

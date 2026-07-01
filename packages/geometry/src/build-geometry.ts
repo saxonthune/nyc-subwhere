@@ -244,6 +244,13 @@ function parentOf(stopId: string, n: Normalized): string {
   return n.stops.get(stopId)?.parent ?? stopId;
 }
 
+// Peak-express "diamond" services (6X/7X/FX) are separate route_ids whose shapes
+// retrace their base route's rails while skipping local stops. On the map they add
+// no track their base route doesn't already draw — only long chords that overlap
+// (and hide) the local segments. Excluded from display geometry to avoid the
+// duplicate; the motion index (buildTracks) still carries them.
+const DIAMOND_EXPRESS = new Set(["6X", "7X", "FX"]);
+
 // ---------- Stage 3: segment geometry (cut + conflate) ----------
 // Cut each canonical shape into inter-station pieces, then merge pieces that are
 // the same physical track (same parent-station pair + direction) across Routes.
@@ -259,6 +266,7 @@ function buildSegments(located: Located[], n: Normalized): SegmentCollection {
   }
   const byKey = new Map<string, Piece[]>();
   for (const { canonical: c, stops } of located) {
+    if (DIAMOND_EXPRESS.has(c.routeId)) continue;
     const line = lineString(c.points);
     for (let i = 0; i < stops.length - 1; i++) {
       const a = stops[i];
