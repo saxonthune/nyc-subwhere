@@ -6,6 +6,14 @@
 import type { Direction, LngLat } from "@nyc-subwhere/contract";
 import { type Normalized, directionOf } from "./gtfs-normalize";
 
+// A shape running fewer than this fraction of its route+direction's busiest
+// shape's trips is a rare reroute/put-in, not regular service. Such shapes
+// retrace other lines' rails (e.g. a lone weekday R put-in down the D's West End
+// line) and would otherwise become canonical geometry, striping the host line
+// with the visitor's color. Real branches (the A's two legs, etc.) each run a
+// large share of the route's trips and clear this bar comfortably.
+const CANON_MIN_TRIP_FRAC = 0.05;
+
 // A representative shape kept for rendering + motion.
 export interface Canonical {
   shapeId: string;
@@ -38,7 +46,16 @@ export function selectCanonical(n: Normalized): Canonical[] {
   }
 
   const canonical: Canonical[] = [];
-  for (const cands of byGroup.values()) {
+  for (const groupCands of byGroup.values()) {
+    // Drop rare reroute shapes so their foreign stops never enter the coverage
+    // target — otherwise greedy would keep a reroute shape to cover them.
+    const maxTrips = Math.max(
+      ...groupCands.map((c) => n.shapeTrips.get(c.shapeId) ?? 0),
+    );
+    const cands = groupCands.filter(
+      (c) =>
+        (n.shapeTrips.get(c.shapeId) ?? 0) >= maxTrips * CANON_MIN_TRIP_FRAC,
+    );
     const target = new Set(cands.flatMap((c) => c.stopIds));
     const covered = new Set<string>();
     const pool = [...cands].sort((a, b) => b.stopIds.length - a.stopIds.length);

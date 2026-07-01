@@ -23,6 +23,27 @@ export const NETWORK_STYLE = {
   dash3a: [2, 4] as number[],
   dash3b: [0.01, 2, 2, 2] as number[],
 
+  // Basemap (doc01.03 Basemap): the five boroughs as grey extruded land over a flat
+  // dark-navy water plane, both drawn beneath the network. Meters. Land is extruded
+  // downward from ground level (y=0) so its top face is the ground the tubes ride on;
+  // water is a single plane seated below that top so the boroughs poke above it and
+  // everything outside them reads as water.
+  land: {
+    color: "#454b52",
+    height: 40,
+  },
+  water: {
+    color: "#0a1a35",
+    // Below the land's top face (y=0) but above its base (-height), so land stands
+    // out of the water at a shoreline.
+    level: -8,
+    // A disc rather than a square: its solid navy core spans well past the five
+    // boroughs, then a radial gradient fades it to transparent by the rim so the
+    // water dissolves into the black background with no hard edge. Meters.
+    radius: 70_000,
+    coreFraction: 0.5,
+  },
+
   station: {
     radius: 3,
     color: "#ffffff",
@@ -73,13 +94,17 @@ export const NETWORK_STYLE = {
     // pushes them to opposite sides — parallel tracks (doc01.03) instead of two
     // tubes fighting on one centerline. ~radius apart leaves a clean gap.
     sideOffsetM: 13,
+    // Tube tessellation: one ring every this many meters of arc length, so every
+    // tube (short or long, straight or curvy) has the same ring density. Banding
+    // is expressed in meters, but uniform rings keep the slanted cut smooth and
+    // keep band boundaries from quantizing coarsely on long segments.
+    ringLengthM: 8,
     // Candy-cane banding for multi-color trunks: each color paints one
-    // arc-length band along the tube, cycling through the trunk's colors. The
-    // band boundary is cut on a slant (advanced on one flank, retreated on the
-    // other) so a chunk reads like a penne noodle, not a flat cylinder ring.
+    // arc-length band along the tube, cycling through the trunk's colors. Band
+    // length is in meters, so a chunk is the same size across the whole map. Cuts
+    // are flat rings perpendicular to the tube (assigned per quad, doc02.03).
     candy: {
       bandLengthM: 45,
-      slantM: 22,
     },
   },
 
@@ -92,13 +117,30 @@ export const NETWORK_STYLE = {
     width: 16,
     height: 10,
     clearance: 2,
-    // Additive glow shell (cheap fake bloom): a larger translucent box around the
-    // core, scaled more across the track than along it, so the halo reads as a
-    // soft aura lifting the train off the line below.
+    // Train glow is a swappable effect (train-glow.ts). `mode` picks the technique:
+    //   "bloom"     — real post-process bloom of the bright train boxes.
+    //   "billboard" — camera-facing additive sprite over each train (no clipping).
+    //   "halo"      — the sprite behind the box, so only a backlit rim shows.
+    //   "none"      — no glow.
+    // scaleLength/scaleCross/opacity size the billboard/halo sprite (multiples of
+    // train length); bloom.* tune the post-process pass.
     glow: {
-      scaleLength: 1.15,
-      scaleCross: 2.2,
-      opacity: 0.4,
+      mode: "bloom" as "bloom" | "billboard" | "halo" | "none",
+      scaleLength: 1.5,
+      scaleCross: 0.6,
+      opacity: 0.75,
+      bloom: {
+        // Luminance above which a pixel blooms. The bloom source is trains-only,
+        // so this only needs to drop the black background; keep it low so every
+        // Route color (even the darker reds/greens) blooms.
+        threshold: 0.1,
+        // Additive strength of the composited bloom.
+        intensity: 1.2,
+        // Blur step in half-res texels per tap; larger = wider, softer halo.
+        radius: 1.5,
+        // Horizontal+vertical blur passes; more = smoother, wider bloom.
+        iterations: 4,
+      },
     },
   },
 };

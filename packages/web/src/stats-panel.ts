@@ -1,46 +1,112 @@
+import { LitElement, css, html, nothing } from "lit";
+
 export interface DropTally {
   total: number;
   rendered: number;
   drops: Map<string, number>;
 }
 
-export class StatsPanel {
-  private readonly content: HTMLDivElement;
-  private open = false;
+// Advanced Stats (doc01.03): live per-frame drop diagnostics in a panel styled
+// like the inspector, opened from the Menu. `open` gates it; `tally` is refreshed
+// each frame by main.ts only while open, so a closed panel costs no re-renders.
+export class StatsPanel extends LitElement {
+  static properties = {
+    open: { attribute: false, type: Boolean },
+    tally: { attribute: false },
+  };
+  declare open: boolean;
+  declare tally: DropTally | null;
 
   constructor() {
-    const button = document.createElement("button");
-    button.className = "stats-panel-toggle";
-    button.textContent = "Advanced Stats";
-
-    this.content = document.createElement("div");
-    this.content.className = "stats-panel-content";
-    this.content.hidden = true;
-
-    button.addEventListener("click", () => {
-      this.open = !this.open;
-      this.content.hidden = !this.open;
-    });
-
-    document.body.appendChild(button);
-    document.body.appendChild(this.content);
+    super();
+    this.open = false;
+    this.tally = null;
   }
 
-  update(tally: DropTally): void {
-    if (!this.open) return;
+  static styles = css`
+    :host {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      z-index: 10;
+      font: 14px/1.4 system-ui, sans-serif;
+      color: #e8e8e8;
+    }
+    .panel {
+      min-width: 220px;
+      background: rgba(18, 18, 20, 0.94);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      overflow: hidden;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.06);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .title {
+      font-weight: 600;
+    }
+    .close {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: inherit;
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0 4px;
+    }
+    .close:hover {
+      color: #fff;
+    }
+    .body {
+      margin: 0;
+      padding: 10px 12px;
+      font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre;
+      color: #d6d6d6;
+    }
+  `;
 
-    const dropped = tally.total - tally.rendered;
-    const lines = [
-      `total: ${tally.total}`,
-      `rendered: ${tally.rendered}`,
-      `dropped: ${dropped}`,
-      ...[...tally.drops.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, count]) => {
-          const [cause, routeId] = key.split(":");
-          return `${cause} ${routeId}: ${count}`;
-        }),
-    ];
-    this.content.textContent = lines.join("\n");
+  private close() {
+    this.open = false;
+  }
+
+  render() {
+    if (!this.open) return nothing;
+    return html`
+      <div class="panel">
+        <header>
+          <span class="title">Advanced Stats</span>
+          <button class="close" @click=${this.close} aria-label="Close">
+            ×
+          </button>
+        </header>
+        <pre class="body">${this.tally ? lines(this.tally) : "…"}</pre>
+      </div>
+    `;
   }
 }
+
+function lines(t: DropTally): string {
+  const dropped = t.total - t.rendered;
+  return [
+    `total: ${t.total}`,
+    `rendered: ${t.rendered}`,
+    `dropped: ${dropped}`,
+    ...[...t.drops.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, count]) => {
+        const [cause, routeId] = key.split(":");
+        return `${cause} ${routeId}: ${count}`;
+      }),
+  ].join("\n");
+}
+
+customElements.define("stats-panel", StatsPanel);

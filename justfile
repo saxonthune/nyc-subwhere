@@ -17,6 +17,15 @@ fetch-gtfs:
 gen-geometry:
     pnpm --filter @nyc-subwhere/geometry build-geometry
 
+# Download the NYC borough boundaries (water excluded) into data/boroughs/ (gitignored)
+fetch-boroughs:
+    mkdir -p data/boroughs
+    curl -fL -o data/boroughs/borough-boundaries.geojson "https://data.cityofnewyork.us/api/geospatial/gthc-hcne?method=export&format=GeoJSON"
+
+# Build the basemap land asset from the borough boundaries (needs `just fetch-boroughs` first)
+gen-boroughs:
+    pnpm --filter @nyc-subwhere/geometry build-boroughs
+
 # Query baked segments: near <lng,lat> [radiusM] | sep <selA> <selB> | diff | lint | overlap
 inspect *ARGS:
     node packages/geometry/scripts/inspect.mjs {{ARGS}}

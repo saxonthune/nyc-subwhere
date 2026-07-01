@@ -2,12 +2,20 @@ import maplibregl from "maplibre-gl";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { NETWORK_STYLE } from "./network-style";
+import { type GlowEffect, cameraDirLocal, createGlow } from "./train-glow";
 import type { TrainPose } from "./trains";
+
+// three.js render layer the train boxes also live on, so the bloom effect can
+// render just the trains by restricting the camera to it (doc02.03).
+const TRAIN_LAYER = 1;
 
 type LngLat = [number, number];
 // colors is the truth from the baked corridor (doc01.03) — one entry for a solid
 // trunk, several for a shared one that draws as a candy-cane tube.
 type Segment = { points: LngLat[]; colors: string[] };
+// One baked borough polygon (doc01.03 Basemap): rings[0] is the outer boundary,
+// any further rings are holes.
+export type BoroughPolygon = LngLat[][];
 
 // Per-station placement in the meter-scaled local frame: offset from `origin`
 // (X east, Z south) plus the track bearing at the station, as a rotation about
@@ -51,11 +59,18 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private boxes?: THREE.InstancedMesh;
   private pucks?: THREE.InstancedMesh;
   private puckMaterial?: THREE.MeshStandardMaterial;
+  private waterTexture?: THREE.Texture;
   private trains?: THREE.InstancedMesh;
-  private trainGlow?: THREE.InstancedMesh;
+  private readonly glow: GlowEffect = createGlow();
   private trainCapacity = 0;
+  // Packed per-frame train draw data handed to the glow effect (train-glow.ts),
+  // grown with the core mesh so no per-frame allocation is needed.
+  private glowPositions = new Float32Array(0);
+  private glowBearings = new Float32Array(0);
+  private glowColors = new Float32Array(0);
   private tubeMeshes: THREE.Mesh[] = [];
   private currentPoses: TrainPose[] = [];
+  private trainsVisible = true;
   private readonly raycaster = new THREE.Raycaster();
 
   private readonly origin = maplibregl.MercatorCoordinate.fromLngLat(
@@ -65,9 +80,15 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private readonly meterScale = this.origin.meterInMercatorCoordinateUnits();
   private readonly placements: Placement[];
   private readonly segments: Segment[];
+  private readonly boroughs: BoroughPolygon[];
 
-  constructor(stations: LngLat[], segments: Segment[]) {
+  constructor(
+    stations: LngLat[],
+    segments: Segment[],
+    boroughs: BoroughPolygon[] = [],
+  ) {
     this.segments = segments;
+    this.boroughs = boroughs;
     const lines = segments.map((s) => s.points);
     this.placements = stations.map((s) => this.place(s, bearingAt(s, lines)));
   }
@@ -101,6 +122,13 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     key.position.set(0.5, 1, 0.3);
     this.scene.add(key);
 
+    // Basemap first (doc01.03): water plane at the bottom, grey borough land above
+    // it, both beneath the network. They carry no userData.kind, so pick() never
+    // sees them and clicks pass through to the tracks and stations.
+    this.scene.add(this.buildWater());
+    const land = this.buildLand();
+    if (land) this.scene.add(land);
+
     this.tubeMeshes = this.buildTubes();
     for (const mesh of this.tubeMeshes) this.scene.add(mesh);
     this.pucks = this.buildPucks();
@@ -115,6 +143,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       antialias: true,
     });
     this.renderer.autoClear = false;
+    this.glow.onAdd(this.renderer, this.scene);
 
     map.on("zoom", this.syncZoom);
     this.syncZoom();
@@ -122,6 +151,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
 
   onRemove() {
     this.map.off("zoom", this.syncZoom);
+    this.glow.dispose();
+    this.waterTexture?.dispose();
     this.renderer.dispose();
   }
 
@@ -177,7 +208,16 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.camera.projectionMatrix = projection.multiply(local);
 
     this.renderer.resetState();
-    this.renderer.render(this.scene, this.camera);
+    this.glow.render(
+      () => this.renderer.render(this.scene, this.camera),
+      () => {
+        // Bloom source: restrict the camera to the train layer so only the train
+        // boxes render, then restore the default layer for the next full pass.
+        this.camera.layers.set(TRAIN_LAYER);
+        this.renderer.render(this.scene, this.camera);
+        this.camera.layers.set(0);
+      },
+    );
     this.map.triggerRepaint();
   }
 
@@ -207,7 +247,14 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
         ({ x, z }) => new THREE.Vector3(x, tube.radius, z),
       );
       const curve = new THREE.CatmullRomCurve3(pts);
-      const tubular = Math.min(400, Math.max(4, pts.length));
+      // Rings spaced a fixed arc-length apart (getPointAt is arc-length
+      // parameterized), so ring density — and thus band size — is uniform across
+      // every segment regardless of its baked vertex count.
+      const length = curve.getLength();
+      const tubular = Math.min(
+        400,
+        Math.max(8, Math.round(length / tube.ringLengthM)),
+      );
       const geo = new THREE.TubeGeometry(
         curve,
         tubular,
@@ -226,12 +273,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
         push(seg.colors[0] ?? "#ffffff", solid, si);
         return;
       }
-      for (const [color, sub] of bandTube(
-        geo,
-        curve.getLength(),
-        tubular,
-        seg.colors,
-      )) {
+      for (const [color, sub] of bandTube(geo, length, tubular, seg.colors)) {
         push(color, sub, si);
       }
       geo.dispose();
@@ -264,6 +306,77 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       meshes.push(mesh);
     }
     return meshes;
+  }
+
+  // A dark-navy disc surrounding the city, seated a little below ground level so
+  // the borough land stands out of it at the shoreline (doc01.03 Basemap). A radial
+  // gradient texture keeps the core solid navy, then fades it to transparent by the
+  // rim so the water dissolves into the black background with no hard edge.
+  // depthWrite off and renderOrder below everything so it never occludes the network.
+  // frustumCulled off: it is large and centered on the origin, and this layer drives
+  // the camera directly, so three's default cull can wrongly reject it.
+  private buildWater(): THREE.Mesh {
+    const { water } = NETWORK_STYLE;
+    const geo = new THREE.CircleGeometry(water.radius, 96);
+    geo.rotateX(-Math.PI / 2); // lay the disc flat in the XZ ground plane
+    this.waterTexture = makeWaterTexture(water.color, water.coreFraction);
+    const mesh = new THREE.Mesh(
+      geo,
+      new THREE.MeshBasicMaterial({
+        map: this.waterTexture,
+        transparent: true,
+        depthWrite: false,
+      }),
+    );
+    mesh.position.y = water.level;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = -1;
+    return mesh;
+  }
+
+  // The five boroughs as one merged grey mesh, each polygon extruded downward from
+  // ground level (doc01.03 Basemap). A borough ring becomes a THREE.Shape in the
+  // local frame with holes; ExtrudeGeometry triangulates and extrudes it along +Z,
+  // and rotateX(-90°) lays that on the ground so the extrude runs up in +Y. The
+  // shape's Y is negated because that rotation flips local south, and the whole
+  // mesh drops by `height` so its top face sits at y=0 — the ground the tubes ride.
+  private buildLand(): THREE.Mesh | null {
+    const { land } = NETWORK_STYLE;
+    const toShapePoint = (p: LngLat): THREE.Vector2 => {
+      const { x, z } = this.toLocal(p);
+      return new THREE.Vector2(x, -z);
+    };
+    const geos: THREE.BufferGeometry[] = [];
+    for (const rings of this.boroughs) {
+      const [outer, ...holes] = rings;
+      if (!outer || outer.length < 3) continue;
+      const shape = new THREE.Shape(outer.map(toShapePoint));
+      for (const hole of holes) {
+        if (hole.length >= 3)
+          shape.holes.push(new THREE.Path(hole.map(toShapePoint)));
+      }
+      const geo = new THREE.ExtrudeGeometry(shape, {
+        depth: land.height,
+        bevelEnabled: false,
+      });
+      geo.rotateX(-Math.PI / 2);
+      geos.push(geo);
+    }
+    if (geos.length === 0) return null;
+    const merged = mergeGeometries(geos, false);
+    for (const g of geos) g.dispose();
+    merged.computeVertexNormals();
+    const mesh = new THREE.Mesh(
+      merged,
+      // DoubleSide so the top face reads lit regardless of the extrude's winding.
+      new THREE.MeshStandardMaterial({
+        color: land.color,
+        side: THREE.DoubleSide,
+      }),
+    );
+    mesh.position.y = -land.height;
+    mesh.frustumCulled = false;
+    return mesh;
   }
 
   private buildPucks(): THREE.InstancedMesh {
@@ -321,44 +434,75 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   // rotated flat about the vertical axis so its length runs along its travel
   // bearing (same X=east, Z=south convention as the platform boxes).
   setTrains(poses: TrainPose[]) {
-    if (!this.trains || !this.trainGlow || poses.length > this.trainCapacity) {
+    if (!this.trains || poses.length > this.trainCapacity) {
       this.rebuildTrains(Math.max(64, poses.length));
     }
     this.currentPoses = poses;
     const core = this.trains;
-    const glow = this.trainGlow;
-    if (!core || !glow) return;
+    if (!core) return;
 
     const centerY = trainCenterY();
+    const off = NETWORK_STYLE.tube.sideOffsetM;
     const rot = new THREE.Matrix4();
     const pos = new THREE.Matrix4();
     const m = new THREE.Matrix4();
     const color = new THREE.Color();
     poses.forEach((p, i) => {
-      const { x, z } = this.toLocal(p.lngLat);
+      const c = this.toLocal(p.lngLat);
+      // Shift onto the same right-of-travel side as the tube (offsetLeft in the
+      // flipped local frame): perpendicular (sin, cos) of the travel bearing, so
+      // the train rides its own track instead of floating on the centerline.
+      const x = c.x + Math.sin(p.bearing) * off;
+      const z = c.z + Math.cos(p.bearing) * off;
       rot.makeRotationY(p.bearing);
       pos.makeTranslation(x, centerY, z);
       m.multiplyMatrices(pos, rot);
-      // The glow box is pre-scaled in geometry, so the same transform drives both.
       core.setMatrixAt(i, m);
-      glow.setMatrixAt(i, m);
       color.set(p.color);
       core.setColorAt(i, color);
-      glow.setColorAt(i, color);
+
+      this.glowPositions[3 * i] = x;
+      this.glowPositions[3 * i + 1] = centerY;
+      this.glowPositions[3 * i + 2] = z;
+      this.glowBearings[i] = p.bearing;
+      this.glowColors[3 * i] = color.r;
+      this.glowColors[3 * i + 1] = color.g;
+      this.glowColors[3 * i + 2] = color.b;
     });
     core.count = poses.length;
-    glow.count = poses.length;
     core.instanceMatrix.needsUpdate = true;
-    glow.instanceMatrix.needsUpdate = true;
     if (core.instanceColor) core.instanceColor.needsUpdate = true;
-    if (glow.instanceColor) glow.instanceColor.needsUpdate = true;
+    // A rebuild (capacity growth) makes a fresh, visible mesh, so re-apply the
+    // toggle here rather than only in toggleTrains.
+    core.visible = this.trainsVisible;
+
+    // Camera direction (toward the viewer) in the local frame, from the map's
+    // pitch/bearing — this layer sets projectionMatrix directly, so there is no
+    // three camera to read it from. Local frame: +X east, +Y up, +Z south.
+    const camDir = cameraDirLocal(this.map.getPitch(), this.map.getBearing());
+    this.glow.update(
+      {
+        count: poses.length,
+        positions: this.glowPositions,
+        bearings: this.glowBearings,
+        colors: this.glowColors,
+      },
+      camDir,
+    );
+  }
+
+  // Hide/show live trains without dropping the poll+interpolate loop (doc01.03).
+  // Not persisted: a reload starts with trains shown.
+  toggleTrains(): void {
+    this.trainsVisible = !this.trainsVisible;
+    if (this.trains) this.trains.visible = this.trainsVisible;
+    this.glow.setVisible(this.trainsVisible);
   }
 
   private rebuildTrains(capacity: number) {
-    for (const old of [this.trains, this.trainGlow]) {
-      if (!old) continue;
-      this.scene.remove(old);
-      old.geometry.dispose();
+    if (this.trains) {
+      this.scene.remove(this.trains);
+      this.trains.geometry.dispose();
     }
     const { train } = NETWORK_STYLE;
 
@@ -378,33 +522,16 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     );
     core.frustumCulled = false;
     core.userData.kind = "train";
-
-    // Glow: a larger additive-blended shell around the core. On the black
-    // background additive blending fakes a cheap bloom halo, lifting the train
-    // clear of the line it rides. depthWrite off so it never occludes.
-    const g = train.glow;
-    const glowGeo = new THREE.BoxGeometry(
-      train.length * g.scaleLength,
-      train.height * g.scaleCross,
-      train.width * g.scaleCross,
-    );
-    const glow = new THREE.InstancedMesh(
-      glowGeo,
-      new THREE.MeshBasicMaterial({
-        transparent: true,
-        opacity: g.opacity,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      }),
-      capacity,
-    );
-    glow.frustumCulled = false;
-    glow.renderOrder = 1;
+    // Also on the train layer so the bloom effect can render it in isolation.
+    core.layers.enable(TRAIN_LAYER);
 
     this.trains = core;
-    this.trainGlow = glow;
     this.trainCapacity = capacity;
-    this.scene.add(glow, core);
+    this.glowPositions = new Float32Array(capacity * 3);
+    this.glowBearings = new Float32Array(capacity);
+    this.glowColors = new Float32Array(capacity * 3);
+    this.glow.rebuild(capacity);
+    this.scene.add(core);
   }
 
   private syncZoom = () => {
@@ -450,6 +577,31 @@ function bearingAt(station: LngLat, lines: LngLat[][]): LngLat | null {
     }
   }
   return dir;
+}
+
+// A radial gradient for the water disc: solid navy out to `coreFraction` of the
+// radius, then easing to transparent at the rim so the disc melts into the black
+// background. CircleGeometry's UVs put the disc center at texture center, so the
+// gradient maps straight onto it.
+function makeWaterTexture(color: string, coreFraction: number): THREE.Texture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return new THREE.Texture();
+  const c = new THREE.Color(color);
+  const rgb = `${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)}`;
+  const r = size / 2;
+  const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
+  grad.addColorStop(0, `rgba(${rgb},1)`);
+  grad.addColorStop(coreFraction, `rgba(${rgb},1)`);
+  grad.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
 }
 
 // Largest triStart[i] <= faceIndex gives the segment owning that triangle.
@@ -510,12 +662,14 @@ function offsetLeft(
 }
 
 // Split a tube into candy-cane color bands. TubeGeometry lays vertices out as
-// (tubular+1) rings of (radialSegments+1) verts; index i is the ring (arc
-// position), j the angle around the tube. Each triangle is assigned to the color
-// of its centroid band, where band position s = ring + slant·cos(angle): the
-// cosine term advances the cut on one flank and retreats it on the other, so the
-// boundary is a slanted plane (the penne look) rather than a flat ring. Returns
-// one non-indexed geometry (position + normal) per color present.
+// (tubular+1) rings of (radialSegments+1) verts; ring = floor(idx/ring). Rings are
+// equally spaced in arc length, so ring i sits at i·ringSpacing meters. Color is
+// assigned per tubular quad, not per triangle: both triangles of a quad share the
+// same near ring, so keying off that ring puts every band boundary exactly on a
+// ring (a flat, clean cut). Keying off a triangle centroid instead would split a
+// quad diagonally where a boundary falls between its two triangles' centroids,
+// producing sawtooth teeth around the tube. Band size is in meters, so a chunk is
+// the same length everywhere. Returns one non-indexed geometry per color present.
 function bandTube(
   geo: THREE.BufferGeometry,
   length: number,
@@ -524,8 +678,6 @@ function bandTube(
 ): Array<[string, THREE.BufferGeometry]> {
   const { candy, radialSegments } = NETWORK_STYLE.tube;
   const ringSpacing = length / tubular; // meters advanced per ring step
-  const bandRings = Math.max(1, candy.bandLengthM / ringSpacing);
-  const slantRings = candy.slantM / ringSpacing;
   const ring = radialSegments + 1;
 
   const pos = geo.getAttribute("position");
@@ -533,22 +685,21 @@ function bandTube(
   const index = geo.getIndex();
   if (!index) return [];
 
-  const sOf = (idx: number): number => {
-    const i = Math.floor(idx / ring);
-    const j = idx % ring;
-    return i + slantRings * Math.cos((2 * Math.PI * j) / radialSegments);
-  };
-  const bandColor = (s: number): string => {
+  const ringOf = (idx: number): number => Math.floor(idx / ring);
+  const triColor = (a: number, b: number, c: number): string => {
+    // Both triangles of a quad span [near, near+1]; band by the quad midpoint so
+    // the boundary lands on a ring rather than slicing through the quad.
+    const near = Math.min(ringOf(a), ringOf(b), ringOf(c));
+    const sMeters = (near + 0.5) * ringSpacing;
     const n = colors.length;
-    return colors[((Math.floor(s / bandRings) % n) + n) % n];
+    return colors[((Math.floor(sMeters / candy.bandLengthM) % n) + n) % n];
   };
 
   const buckets = new Map<string, { p: number[]; n: number[] }>();
   const arr = index.array;
   for (let t = 0; t < arr.length; t += 3) {
     const tri = [arr[t], arr[t + 1], arr[t + 2]];
-    const s = (sOf(tri[0]) + sOf(tri[1]) + sOf(tri[2])) / 3;
-    const color = bandColor(s);
+    const color = triColor(tri[0], tri[1], tri[2]);
     let bucket = buckets.get(color);
     if (!bucket) {
       bucket = { p: [], n: [] };

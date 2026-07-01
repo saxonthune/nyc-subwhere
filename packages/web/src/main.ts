@@ -6,12 +6,17 @@ import type {
   StationProperties,
   TrackIndex,
 } from "@nyc-subwhere/contract";
+import boroughsUrl from "./assets/boroughs.geojson?url";
 import segmentsUrl from "./assets/segments.geojson?url";
 import stationsUrl from "./assets/stations.geojson?url";
 import trackIndexUrl from "./assets/track-index.json?url";
 import { InspectorPanel, type InspectorTarget } from "./inspector-panel";
-import { NetworkLayer, type PickResult } from "./network-layer";
-import { NETWORK_STYLE, directionOffset } from "./network-style";
+import { Menu } from "./menu";
+import {
+  type BoroughPolygon,
+  NetworkLayer,
+  type PickResult,
+} from "./network-layer";
 import { StatsPanel } from "./stats-panel";
 import { type TrainPose, indexTracks, resolveTrip } from "./trains";
 
@@ -43,112 +48,17 @@ const map = new maplibregl.Map({
 
 map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-// Static network geometry (doc02.05): route lines + station dots from the baked
-// GTFS assets. The Three.js train layer renders above these later (doc02.03).
+// Static network geometry (doc02.05): route tubes + station pucks/boxes, all
+// rendered in the Three.js custom layer (doc02.03). No flat MapLibre line/circle
+// layers — the 3D layer is the only draw of the network.
 map.on("load", async () => {
-  map.addSource("segments", { type: "geojson", data: segmentsUrl });
-  map.addSource("stations", { type: "geojson", data: stationsUrl });
-
-  // Semantic-zoom LOD (doc01.03): both directions share a corridor and coincide
-  // when zoomed out; line-offset fans them apart into parallel tracks as you zoom
-  // in. N/S shapes run antiparallel, so an equal offset pushes them to opposite
-  // sides. Applied identically to every line layer so stripes stay aligned.
-  // Breakpoints live in network-style.ts (retuned often).
-  const offset = directionOffset();
-  const width = NETWORK_STYLE.lineWidth;
-
-  // A conflated segment carries the distinct colors of every Route on it as flat
-  // props (doc02.05): color0 is the solid base, color1/color2 are stripes. NYC's
-  // per-trunk palette keeps this to 3 colors max, so base + two stripes suffice.
-
-  // Tron glow: a wide, blurred, low-opacity halo under the crisp base.
-  map.addLayer({
-    id: "route-glow",
-    type: "line",
-    source: "segments",
-    layout: { "line-cap": "round", "line-join": "round" },
-    paint: {
-      "line-color": ["get", "color0"],
-      "line-width": NETWORK_STYLE.glow.width,
-      "line-blur": NETWORK_STYLE.glow.blur,
-      "line-opacity": NETWORK_STYLE.glow.opacity,
-      "line-offset": offset,
-    },
-  });
-  // Base: solid colors[0] on every segment (the only layer 1-color trunks need).
-  map.addLayer({
-    id: "route-base",
-    type: "line",
-    source: "segments",
-    layout: { "line-cap": "round", "line-join": "round" },
-    paint: {
-      "line-color": ["get", "color0"],
-      "line-width": width,
-      "line-offset": offset,
-    },
-  });
-  // 2-color candy-cane: colors[1] dashed over the base → 50/50 stripes.
-  map.addLayer({
-    id: "route-stripe-2",
-    type: "line",
-    source: "segments",
-    filter: ["==", ["get", "colorCount"], 2],
-    layout: { "line-cap": "butt", "line-join": "round" },
-    paint: {
-      "line-color": ["get", "color1"],
-      "line-width": width,
-      "line-dasharray": NETWORK_STYLE.dash2,
-      "line-offset": offset,
-    },
-  });
-  // 3-color: colors[1] fills the first third, colors[2] the middle third (phase-
-  // shifted via a leading near-zero dash, since MapLibre has no dash offset), base
-  // shows through the last third.
-  map.addLayer({
-    id: "route-stripe-3a",
-    type: "line",
-    source: "segments",
-    filter: ["==", ["get", "colorCount"], 3],
-    layout: { "line-cap": "butt", "line-join": "round" },
-    paint: {
-      "line-color": ["get", "color1"],
-      "line-width": width,
-      "line-dasharray": NETWORK_STYLE.dash3a,
-      "line-offset": offset,
-    },
-  });
-  map.addLayer({
-    id: "route-stripe-3b",
-    type: "line",
-    source: "segments",
-    filter: ["==", ["get", "colorCount"], 3],
-    layout: { "line-cap": "butt", "line-join": "round" },
-    paint: {
-      "line-color": ["get", "color2"],
-      "line-width": width,
-      "line-dasharray": NETWORK_STYLE.dash3b,
-      "line-offset": offset,
-    },
-  });
-
-  map.addLayer({
-    id: "stations",
-    type: "circle",
-    source: "stations",
-    paint: {
-      "circle-radius": NETWORK_STYLE.station.radius,
-      "circle-color": NETWORK_STYLE.station.color,
-      "circle-stroke-width": NETWORK_STYLE.station.strokeWidth,
-      "circle-stroke-color": NETWORK_STYLE.station.strokeColor,
-    },
-  });
-
-  // 3D station pucks + platform boxes (doc02.03) in a Three.js custom layer above
-  // the flat network. Fetch the baked geometry once; it is static. Segments give
+  // 3D route tubes + station pucks + platform boxes (doc02.03) in a Three.js
+  // custom layer. Fetch the baked geometry once; it is static. Segments give
   // each station's track bearing so its box lies parallel to the track.
-  const [stationsRes, segmentsRes] = await Promise.all([
+  const [stationsRes, segmentsRes, boroughsRes] = await Promise.all([
     fetch(stationsUrl),
     fetch(segmentsUrl),
+    fetch(boroughsUrl),
   ]);
   const stationsGeo = (await stationsRes.json()) as {
     features: {
@@ -162,14 +72,32 @@ map.on("load", async () => {
       properties: SegmentProperties;
     }[];
   };
+  const boroughsGeo = (await boroughsRes.json()) as {
+    features: { geometry: { coordinates: BoroughPolygon } }[];
+  };
   const lngLats = stationsGeo.features.map((f) => f.geometry.coordinates);
   const segments = segmentsGeo.features.map((f) => ({
     points: f.geometry.coordinates,
     colors: f.properties.colors ?? [f.properties.color0],
   }));
-  const networkLayer = new NetworkLayer(lngLats, segments);
+  const boroughs = boroughsGeo.features.map((f) => f.geometry.coordinates);
+  const networkLayer = new NetworkLayer(lngLats, segments, boroughs);
   map.addLayer(networkLayer);
+
+  // Bottom-left Menu drives the optional panels (doc01.03): a train visibility
+  // toggle and the Advanced Stats panel.
   const statsPanel = new StatsPanel();
+  const menu = new Menu();
+  menu.options = [
+    { label: "Toggle trains", onSelect: () => networkLayer.toggleTrains() },
+    {
+      label: "Advanced stats",
+      onSelect: () => {
+        statsPanel.open = !statsPanel.open;
+      },
+    },
+  ];
+  document.body.append(statsPanel, menu);
 
   // Inspector (doc01.03): station and segment metadata parallel the arrays handed
   // to the layer, so a PickResult's index reads straight back to props here; a
@@ -261,11 +189,13 @@ map.on("load", async () => {
         }
       }
       networkLayer.setTrains(poses);
-      statsPanel.update({
-        total: snapshot.trips.length,
-        rendered: poses.length,
-        drops,
-      });
+      if (statsPanel.open) {
+        statsPanel.tally = {
+          total: snapshot.trips.length,
+          rendered: poses.length,
+          drops,
+        };
+      }
     }
     requestAnimationFrame(frame);
   };

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build-geometry": "tsx src/build-geometry.ts",
+    "build-boroughs": "tsx src/build-boroughs.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

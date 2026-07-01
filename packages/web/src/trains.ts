@@ -18,9 +18,8 @@ export interface TrainPose {
   bearing: number; // radians, atan2(north, east) of travel direction
 }
 
-// v0 worker serves only the IRT numbered lines + 42 St shuttle (doc02.04). NYC
-// colors by trunk, so a handful of hexes cover every Route we can see; anything
-// else falls back to grey. Baking a route->color asset supersedes this later.
+// NYC colors by trunk, so a handful of hexes cover every Route. Baking a
+// route->color asset supersedes this later.
 const ROUTE_COLOR: Record<string, string> = {
   "1": "#EE352E",
   "2": "#EE352E",
@@ -29,8 +28,29 @@ const ROUTE_COLOR: Record<string, string> = {
   "5": "#00933C",
   "6": "#00933C",
   "7": "#B933AD",
+  A: "#0039A6",
+  C: "#0039A6",
+  E: "#0039A6",
+  B: "#FF6319",
+  D: "#FF6319",
+  F: "#FF6319",
+  M: "#FF6319",
+  N: "#FCCC0A",
+  Q: "#FCCC0A",
+  R: "#FCCC0A",
+  W: "#FCCC0A",
+  G: "#6CBE45",
+  J: "#996633",
+  Z: "#996633",
+  L: "#A7A9AC",
+  // Shuttles (42 St, Franklin Av, Rockaway Park) all render dark grey.
   GS: "#808183",
   S: "#808183",
+  SS: "#808183",
+  FS: "#808183",
+  H: "#808183",
+  SI: "#0039A6",
+  SIR: "#0039A6",
 };
 const FALLBACK_COLOR = "#9a9a9a";
 
@@ -92,8 +112,14 @@ export function resolveTrip(
   };
 }
 
+// Express-diamond variants ("6X", "7X") share their trunk color, so strip a
+// trailing X before the lookup.
 function colorFor(routeId: string): string {
-  return ROUTE_COLOR[routeId] ?? FALLBACK_COLOR;
+  return (
+    ROUTE_COLOR[routeId] ??
+    ROUTE_COLOR[routeId.replace(/X$/, "")] ??
+    FALLBACK_COLOR
+  );
 }
 
 // Interpolate distance from the keyframes, clamped to the runway ends. (The

@@ -20,6 +20,7 @@ export interface Normalized {
   shapePoints: Map<string, LngLat[]>; // shape_id -> ordered polyline
   shapeRoute: Map<string, string>; // shape_id -> route_id
   shapeStops: Map<string, string[]>; // shape_id -> ordered directional stop_ids
+  shapeTrips: Map<string, number>; // shape_id -> number of trips running it
   feedVersion: string | null;
 }
 
@@ -80,12 +81,16 @@ export function normalize(
     );
   }
 
-  // shape_id -> route_id, and shape_id -> ordered stops (via one representative trip).
+  // shape_id -> route_id, ordered stops (via one representative trip), and how
+  // many trips run each shape (so select-canonical can tell a route's regular
+  // pattern from a rare reroute/put-in that retraces another line's rails).
   const shapeRoute = new Map<string, string>();
   const shapeStops = new Map<string, string[]>();
+  const shapeTrips = new Map<string, number>();
   for (const t of tripRows) {
     if (!t.shape_id) continue;
     if (!shapeRoute.has(t.shape_id)) shapeRoute.set(t.shape_id, t.route_id);
+    shapeTrips.set(t.shape_id, (shapeTrips.get(t.shape_id) ?? 0) + 1);
     const stopSeq = repStopTimes.get(t.trip_id);
     if (stopSeq && !shapeStops.has(t.shape_id))
       shapeStops.set(t.shape_id, stopSeq);
@@ -97,6 +102,7 @@ export function normalize(
     shapePoints,
     shapeRoute,
     shapeStops,
+    shapeTrips,
     feedVersion,
   };
 }

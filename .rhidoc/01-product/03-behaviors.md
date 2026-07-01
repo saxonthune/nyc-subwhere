@@ -1,6 +1,6 @@
 ---
 title: Behaviors
-summary: EARS behavioral intent for the Board — render live trips, glide between polls, ride track by stops (off-route reroutes), blink when position is uncertain, reveal directional tracks on zoom, stripe shared track, render the network with depth (tubes, pucks, platform boxes), tap to inspect
+summary: EARS behavioral intent for the Board — render live trips, glide between polls, ride track by stops (off-route reroutes), blink when position is uncertain, reveal directional tracks on zoom, stripe shared track, render the network with depth (tubes, pucks, platform boxes), seat it on grey extruded borough land over a dark-navy water disc that fades into the backdrop, tap to inspect
 tags: [product, behaviors, ears, rendering, interaction]
 deps: [doc01.01, doc02.01, doc02.03, doc02.05]
 ---
@@ -100,6 +100,10 @@ view stays clean and the street view stays informative.
 - Where a stretch of track is shared by more than one Route, the Board shall stripe it in
   the sharing Routes' colors at every zoom level, so no single Route's color hides the
   others.
+- Where the Board stripes a shared stretch, it shall make every color band the same
+  length along the track, uniform across the whole map regardless of a corridor's shape
+  or how densely its geometry is sampled, so the stripe reads as one consistent pattern
+  rather than stretching and bunching from segment to segment.
 
 ## Depth
 
@@ -117,6 +121,29 @@ platform.
 - While the map is zoomed in past a threshold, the Board shall fade the Station puck toward
   transparent, so that at close zoom the tubes pass over the platform box with no puck
   occluding them.
+
+## Basemap
+
+The network does not float in a void: it sits on the land, and the land sits on the
+water. Both are quiet backdrops drawn beneath everything else. The five boroughs
+render as grey land, extruded to a shallow height so it reads as ground with form
+rather than a flat fill; beneath the land, a dark-navy disc reads as water, fading to
+transparent at its rim so it dissolves into the black backdrop rather than ending at a
+hard edge. Only the five boroughs are drawn as land — everything outside them is left
+unrendered, so it reads as water by default, and the water needs no source geometry of
+its own. The asset pipeline (doc02.05) bakes the borough geometry from a public boundary
+source, the same way it bakes the network.
+
+- The asset pipeline shall bake a borough land geometry set from a public NYC borough
+  boundary source.
+- The Board shall render the five boroughs' land as grey polygons extruded to a
+  shallow height.
+- The Board shall render water as a dark-navy disc seated just below the borough land,
+  fading to transparent at its rim so it dissolves into the backdrop with no hard edge.
+- The Board shall leave landmass outside the five boroughs unrendered, so it reads as
+  water.
+- The Board shall draw the basemap — land and water — below all other geometry, so
+  tracks, stations, and trains read above it.
 
 ## Interaction
 
