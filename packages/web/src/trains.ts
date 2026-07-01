@@ -34,6 +34,11 @@ const ROUTE_COLOR: Record<string, string> = {
 };
 const FALLBACK_COLOR = "#9a9a9a";
 
+// Feed routeId -> baked track-index routeId. The Rockaway Park shuttle reports
+// "SS" in realtime but is baked as "H".
+const ROUTE_ALIAS: Record<string, string> = { SS: "H" };
+const bakedRouteId = (routeId: string) => ROUTE_ALIAS[routeId] ?? routeId;
+
 const trackKey = (routeId: string, direction: string) =>
   `${routeId}|${direction}`;
 
@@ -43,13 +48,22 @@ export function indexTracks(index: TrackIndex): Map<string, Track> {
   return m;
 }
 
-export function poseForTrip(
+export type DropCause = "noTrack" | "noStop";
+export type TripResolution =
+  | { ok: true; pose: TrainPose }
+  | { ok: false; cause: DropCause; routeId: string };
+
+export function resolveTrip(
   trip: TripState,
   tracks: Map<string, Track>,
   nowMs: number,
-): TrainPose | null {
-  const track = tracks.get(trackKey(trip.routeId, trip.direction));
-  if (!track) return null;
+): TripResolution {
+  const track = tracks.get(
+    trackKey(bakedRouteId(trip.routeId), trip.direction),
+  );
+  if (!track) {
+    return { ok: false, cause: "noTrack", routeId: trip.routeId };
+  }
 
   const distByStop = new Map<string, number>();
   for (const s of track.stops) distByStop.set(s.stopId, s.dist);
@@ -58,7 +72,9 @@ export function poseForTrip(
   // upcoming stop the track actually carries.
   const kf: { dist: number; t: number }[] = [];
   const d0 = distByStop.get(trip.lastKnownStop.stopId);
-  if (d0 == null) return null;
+  if (d0 == null) {
+    return { ok: false, cause: "noStop", routeId: trip.routeId };
+  }
   kf.push({ dist: d0, t: trip.lastKnownStop.at });
   for (const u of trip.upcoming) {
     const d = distByStop.get(u.stopId);
@@ -67,9 +83,12 @@ export function poseForTrip(
 
   const dist = distAt(kf, nowMs);
   return {
-    tripId: trip.tripId,
-    color: colorFor(trip.routeId),
-    ...pointAt(track, dist),
+    ok: true,
+    pose: {
+      tripId: trip.tripId,
+      color: colorFor(trip.routeId),
+      ...pointAt(track, dist),
+    },
   };
 }
 

@@ -6,7 +6,8 @@ import stationsUrl from "./assets/stations.geojson?url";
 import trackIndexUrl from "./assets/track-index.json?url";
 import { NetworkLayer } from "./network-layer";
 import { NETWORK_STYLE, directionOffset } from "./network-style";
-import { type TrainPose, indexTracks, poseForTrip } from "./trains";
+import { StatsPanel } from "./stats-panel";
+import { type TrainPose, indexTracks, resolveTrip } from "./trains";
 
 const container = document.getElementById("map");
 
@@ -159,6 +160,7 @@ map.on("load", async () => {
   }));
   const networkLayer = new NetworkLayer(lngLats, segments);
   map.addLayer(networkLayer);
+  const statsPanel = new StatsPanel();
 
   // Live trains (doc02.04): poll the worker's render frame every ~30s, then each
   // animation frame interpolate every Trip's Position Estimate along its baked
@@ -187,10 +189,23 @@ map.on("load", async () => {
   const frame = () => {
     if (snapshot) {
       const now = Date.now() + clockSkew;
-      const poses = snapshot.trips
-        .map((t) => poseForTrip(t, tracks, now))
-        .filter((p): p is TrainPose => p !== null);
+      const poses: TrainPose[] = [];
+      const drops = new Map<string, number>();
+      for (const t of snapshot.trips) {
+        const r = resolveTrip(t, tracks, now);
+        if (r.ok) {
+          poses.push(r.pose);
+        } else {
+          const key = `${r.cause}:${r.routeId}`;
+          drops.set(key, (drops.get(key) ?? 0) + 1);
+        }
+      }
       networkLayer.setTrains(poses);
+      statsPanel.update({
+        total: snapshot.trips.length,
+        rendered: poses.length,
+        drops,
+      });
     }
     requestAnimationFrame(frame);
   };

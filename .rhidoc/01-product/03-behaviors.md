@@ -114,3 +114,11 @@ platform.
 
 - When a rider selects a train, the Board shall present that Trip's Route,
   direction, destination, and next-Station arrival.
+
+## Advanced Stats
+
+An optional panel, off by default, that a rider can open to see diagnostic
+information about the current frame beyond what the map itself shows.
+
+- The Board shall offer a toggleable Advanced Stats panel, hidden by default,
+  that a rider can open to inspect diagnostic information about the live frame.
