@@ -1,5 +1,13 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "files": {
+    "ignore": [
+      "**/dist/**",
+      "packages/web/src/assets/**",
+      "data/**",
+      ".rhidoc.json"
+    ]
+  },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",

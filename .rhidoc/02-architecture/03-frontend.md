@@ -20,6 +20,18 @@ MapLibre supplies the engine, controls, and layer/style logic; it does not suppl
 tron view needs none (it draws Route geometry itself); the street view needs a dark vector
 basemap source, still to be chosen.
 
+## Network Geometry
+
+The tron view's Route lines and Station points come from a **build-time conversion** of MTA's
+static GTFS bundle (doc02.02) into GeoJSON — `shapes.txt` → Route LineString features,
+`stops.txt` → Station point features — generated into the web package's assets and loaded as a
+MapLibre GeoJSON source at startup. No runtime fetch: the network geometry is near-static and
+regenerates only when the GTFS bundle changes (rebuild the web package to update lines/stations).
+
+Route color comes from the same bundle (`routes.txt` `route_color`), so the palette is anchored
+to MTA's own data rather than hand-picked. The street-view toggle layers a dark vector basemap
+*beneath* these same GeoJSON layers; the trains (Three.js custom layer) render *above* them.
+
 ## Build Stack
 
 - **Vite** — dev server, bundler, and production build; transpiles TypeScript via esbuild.

@@ -1,6 +1,6 @@
 ---
 title: MTA Resources
-summary: Where subway data comes from, its contract and shape, and the fetch decisions still open
+summary: Where subway data comes from, its contract and shape, and how a realtime Trip joins static geometry
 tags: [architecture, mta, gtfs, data-source]
 deps: [doc01.01]
 ---
@@ -34,18 +34,11 @@ Contract and shape:
 - The feed's prediction horizon is the **Trip Replacement Period** — 30 minutes; no Trip Update
   reaches further ahead than that.
 - Static GTFS (Stop lat/lon, Route/shape geometry) comes from MTA's static GTFS bundle
-  (mta.info / data.ny.gov). A realtime Trip joins static geometry by `route_id` and `stop_id`.
-
-## Open — App Decisions
-
-Not facts about the feed; choices the app still owns:
-- Does the browser fetch the Feed directly, or does a proxy/worker sit between (CORS, protobuf
-  decoding)? Note: `stop_id`/`route_id` join reliably, but NYCT realtime `trip_id`s do not match
-  static `trip_id`s directly — resolve the join before relying on it.
-- The exact poll cadence / any rate limit is not pinned by MTA docs beyond the 30-minute horizon;
-  pick a conservative refresh interval.
-- How the raw feed becomes a **Position Estimate** — interpolating between two **Stop Time
-  Update**s along a **Segment**.
+  (mta.info / data.ny.gov). A realtime Trip joins static geometry by `route_id` and `stop_id`;
+  `stop_id`/`route_id` match reliably, but NYCT realtime `trip_id`s do **not** match static
+  `trip_id`s directly — the join resolves through stop/route, not trip.
+- MTA pins no rate limit beyond the 30-minute horizon; the exact regeneration cadence is not
+  documented (order of ~30s).
 
 ## Constraints
 

@@ -45,4 +45,4 @@ Position Estimate across snapshots. Absent that need, the read-through cache is 
 
 The Worker's response is the renderer's contract, not raw GTFS-realtime: live Trips (NYCT
 `is_assigned`) with the fields the Board needs, already decoded from protobuf and filtered.
-The exact shape is defined with the front-end (doc02.03, open).
+The exact shape is the shared contract package (`@nyc-subwhere/contract`).

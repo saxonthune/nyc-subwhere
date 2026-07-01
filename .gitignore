@@ -147,3 +147,6 @@ vite.config.ts.timestamp-*
 # Build output
 dist/
 
+# Raw MTA GTFS bundle — large + regenerable; derived assets in packages/web are committed (doc02.05)
+/data/
+

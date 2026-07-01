@@ -46,12 +46,10 @@ seam) owns the pull:
   Static Assets) *and* the `/api` route, so the front-end calls its data source same-origin with
   no CORS and the whole app ships in one deploy. (Backend seam: doc02.04.)
 
-Where the parsed feed becomes a Position Estimate — interpolating between two Stop Time Updates
-along a Segment — is shared logic; whether it lives in the worker or the client is an open
-decision carried in doc02.02.
+Turning the parsed feed into a Position Estimate — interpolating between two Stop Time Updates
+along a Segment — is shared logic that reads from the contract (`@nyc-subwhere/contract`).
 
 ## Front-End: Website
 
-*(Open — a later session fills this in.)* Owns rendering the Board and animating Position
-Estimates between polls. Scope, framework, and the interpolation-vs-fetch boundary are undecided
-here.
+The front-end (doc02.03) renders the Board and animates Position Estimates between polls, reading
+the Worker's `/api` responses against the shared contract (`@nyc-subwhere/contract`).
