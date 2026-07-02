@@ -1,5 +1,6 @@
 import { LitElement, css, html, nothing } from "lit";
 import type { PredictionErrorRecord } from "./prediction-error";
+import type { EstimatorReport } from "./trains";
 
 export interface DropTally {
   total: number;
@@ -23,12 +24,15 @@ export class StatsPanel extends LitElement {
     open: { attribute: false, type: Boolean },
     tally: { attribute: false },
     error: { attribute: false },
+    estimator: { attribute: false },
     camera: { attribute: false },
   };
   declare open: boolean;
   declare tally: DropTally | null;
   /** Latest prediction-error record, refreshed once per poll. */
   declare error: PredictionErrorRecord | null;
+  /** Latest estimator reconciliation report, refreshed once per poll. */
+  declare estimator: EstimatorReport | null;
   /** Live camera pose, refreshed on map move while open — for the shot-at harness. */
   declare camera: CameraReadout | null;
 
@@ -37,6 +41,7 @@ export class StatsPanel extends LitElement {
     this.open = false;
     this.tally = null;
     this.error = null;
+    this.estimator = null;
     this.camera = null;
   }
 
@@ -108,6 +113,7 @@ export class StatsPanel extends LitElement {
         <pre class="body">${[
           cameraLines(this.camera),
           this.tally ? lines(this.tally) : "…",
+          estimatorLines(this.estimator),
           errorLines(this.error),
         ]
           .filter(Boolean)
@@ -140,6 +146,17 @@ function lines(t: DropTally): string {
         const [cause, routeId] = key.split(":");
         return `${cause} ${routeId}: ${count}`;
       }),
+  ].join("\n");
+}
+
+function estimatorLines(e: EstimatorReport | null): string {
+  if (!e) return "";
+  const sign = (v: number) => (v >= 0 ? `+${v}` : `${v}`);
+  return [
+    `— estimator vs reality (m), n=${e.matched} —`,
+    `drift p50: ${e.drift.p50}  p95: ${e.drift.p95}  bias: ${sign(e.drift.signed)}`,
+    `visual jump p50: ${e.jump.p50}  p95: ${e.jump.p95}  max: ${e.jump.max}`,
+    `teleported: ${e.jump.moved}/${e.matched}  bias: ${sign(e.jump.signed)}`,
   ].join("\n");
 }
 

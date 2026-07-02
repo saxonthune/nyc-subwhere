@@ -1,20 +1,21 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { type Plugin, defineConfig } from "vite";
 
-// Dev-only sink for the prediction-error metric (doc02.04). The client POSTs one
-// record per poll to /__metrics/prediction-error; we append it as JSONL to
-// .metrics/prediction-error.jsonl (gitignored) for offline analysis. `serve`
-// only — a production build carries no such endpoint.
+// Dev-only sink for the metric streams (doc02.04, doc02.06). The client POSTs one
+// record per poll to /__metrics/<name> (e.g. prediction-error, estimator); we
+// append it as JSONL to .metrics/<name>.jsonl (gitignored) for offline analysis.
+// `serve` only — a production build carries no such endpoint.
 function metricsSink(): Plugin {
   const dir = new URL("./.metrics/", import.meta.url);
-  const file = new URL("./.metrics/prediction-error.jsonl", import.meta.url);
   return {
     name: "metrics-sink",
     apply: "serve",
     configureServer(server) {
-      server.middlewares.use("/__metrics/prediction-error", (req, res) => {
-        if (req.method !== "POST") {
-          res.statusCode = 405;
+      server.middlewares.use("/__metrics/", (req, res) => {
+        // Connect strips the mount prefix, so req.url is "/<name>".
+        const name = (req.url ?? "").replace(/^\//, "").split(/[?#]/)[0];
+        if (req.method !== "POST" || !/^[a-z0-9-]+$/.test(name)) {
+          res.statusCode = req.method === "POST" ? 404 : 405;
           res.end();
           return;
         }
@@ -24,7 +25,7 @@ function metricsSink(): Plugin {
           try {
             await mkdir(dir, { recursive: true });
             await appendFile(
-              file,
+              new URL(`./.metrics/${name}.jsonl`, import.meta.url),
               `${Buffer.concat(chunks).toString("utf8")}\n`,
             );
             res.statusCode = 204;

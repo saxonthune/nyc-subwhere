@@ -51,6 +51,10 @@ feed-probe *ARGS:
 metrics-report:
     node packages/web/scripts/metrics-report.mjs
 
+# Summarize the estimator metrics: rendered position vs reality, and visible re-base jumps
+estimator-report:
+    node packages/web/scripts/estimator-report.mjs
+
 # Run the web app locally (Vite dev server, HMR)
 dev:
     pnpm --filter @nyc-subwhere/web dev

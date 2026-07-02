@@ -132,6 +132,10 @@ export interface TrackCrossing {
 export interface TrackGraph {
   crossings: TrackCrossing[];
   elevation: number[][];
+  // Antiparallel partner index for each segment (the opposite-direction half of the
+  // same corridor), or -1 if one-directional. The renderer fuses a pair into a single
+  // full-width track ribbon so there is no centerline seam. Parallel to features.
+  partner: number[];
 }
 
 // --- Linear-reference index (motion) ------------------------------------

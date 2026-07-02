@@ -12,7 +12,11 @@ export type TrackSegment = { points: LngLat[]; colors: string[] };
 // segments array; `elevation[i]` is the per-vertex vertical offset (meters) for
 // segment i, parallel to its points, ramping the over side of a crossing up and back.
 export type TrackCrossing = { point: LngLat; over: number; under: number };
-export type TrackGraph = { crossings: TrackCrossing[]; elevation: number[][] };
+export type TrackGraph = {
+  crossings: TrackCrossing[];
+  elevation: number[][];
+  partner: number[];
+};
 
 // What the layer lends a renderer: the meter-frame projection it already owns.
 // Keeps the renderer free of MapLibre/origin math.
@@ -52,15 +56,14 @@ export function trackTopY(): number {
 type Frame = { cx: number; cz: number; nx: number; nz: number };
 type P2 = { x: number; z: number };
 
-// One wide flat track, assembled so junction errors are local, not global (doc02.05):
-//   floor  — each segment's caret half-ribbon, raised on a dome where the segment is
-//            the `over` side of a crossing.
-//   walls  — each segment's own two edge curbs, but a curb piece is SUPPRESSED where
-//            another track lies right beside that edge at the same height. That one
-//            local test does both jobs: at a merge the facing walls of two overlapping
-//            same-grade tracks both vanish (a clean join, no seam); at a crossing the
-//            two sides are at different heights, so the test keeps their walls and
-//            they stay separated. No union, so nothing can be flattened into a plus.
+// One wide flat track per corridor (doc02.05). A corridor's two directions are fused
+// into a single full-width ribbon (the partner segment is skipped), so there is no
+// centerline seam to reason about — the median wall problem simply doesn't exist.
+//   floor  — one full-width caret ribbon (-halfWidth..+halfWidth) on the corridor
+//            centerline, lifted per-vertex by the baked crossing elevation.
+//   walls  — only the two true outer edges; a curb piece is dropped where another
+//            track's floor covers the point just outboard of it (an interior merge
+//            edge). Crossings, at different baked grades, keep their walls.
 // Floors merge into one caret-shader mesh with a face→segment map for picking; walls
 // merge into one unlit grey mesh (not pickable — clicks fall through to the floor).
 export class FlatTrackRenderer implements TrackRenderer {
@@ -77,20 +80,26 @@ export class FlatTrackRenderer implements TrackRenderer {
         : undefined;
     });
 
-    // Floor-coverage field for wall suppression: every segment's floor area sampled
+    // A corridor is drawn once, as a full-width ribbon. Own it if one-directional or the
+    // lower-indexed half of a pair; the partner half is skipped (its geometry mirrors).
+    const owns = (si: number) => {
+      const p = graph.partner[si];
+      return p < 0 || si < p;
+    };
+
+    // Floor-coverage field for wall suppression: every corridor's floor area sampled
     // (across its width, at grade), so a wall piece can ask "does another track's floor
     // lie just beyond me?" — the mark of an interior (merge) edge to drop.
     const heights = new HeightGrid();
     built.forEach((b, si) => {
-      if (!b) return;
-      addFloorSamples(b.frames, b.lift, si, heights);
+      if (b && owns(si)) addFloorSamples(b.frames, b.lift, si, heights);
     });
 
     const floors: { geo: THREE.BufferGeometry; seg: number }[] = [];
     const wallPos: number[] = [];
     const wallNor: number[] = [];
     built.forEach((b, si) => {
-      if (!b) return;
+      if (!b || !owns(si)) return;
       const along = southOriginArcLength(b.frames);
       floors.push({
         geo: buildFloor(b.frames, along, segments[si].colors, b.lift),
@@ -195,7 +204,7 @@ function addFloorSamples(
 ) {
   const { halfWidth, surfaceY } = NETWORK_STYLE.track;
   const step = NETWORK_STYLE.track.junction.sampleStepM;
-  const across = [0, -halfWidth / 2, -halfWidth];
+  const across = [halfWidth, halfWidth / 2, 0, -halfWidth / 2, -halfWidth];
   for (let i = 0; i < frames.length - 1; i++) {
     const a = frames[i];
     const b = frames[i + 1];
@@ -239,18 +248,18 @@ function mergeEntries(
   return { mesh, faceMap };
 }
 
-// One half-ribbon floor: a quad strip on the left of the centerline, from the
-// median (`medianGap` from center) out to the full half-width, at `surfaceY` plus
-// the per-vertex crossing-dome lift. Every vertex carries its across-track distance
-// from center (`aU`), its along-track distance from the south end (`aV`), and the
-// segment palette padded to 4 with a color count.
+// One full-width corridor floor: a quad strip from the right edge (+halfWidth) to the
+// left edge (-halfWidth), at `surfaceY` plus the per-vertex crossing lift. Every vertex
+// carries its across-track distance from center (`aU`, signed), its along-track distance
+// from the south end (`aV`), and the palette padded to 4 with a color count. The caret
+// shader uses |aU|, so the chevron apex sits on the centerline and points north.
 function buildFloor(
   frames: Frame[],
   along: number[],
   colors: string[],
   lift: number[],
 ): THREE.BufferGeometry {
-  const { medianGap, halfWidth, surfaceY } = NETWORK_STYLE.track;
+  const { halfWidth, surfaceY } = NETWORK_STYLE.track;
   const pos: number[] = [];
   const uA: number[] = [];
   const vA: number[] = [];
@@ -262,16 +271,16 @@ function buildFloor(
   for (let i = 0; i < frames.length - 1; i++) {
     const y0 = surfaceY + lift[i];
     const y1 = surfaceY + lift[i + 1];
-    const li0 = at(frames[i], -medianGap, y0);
+    const ro0 = at(frames[i], halfWidth, y0);
     const lo0 = at(frames[i], -halfWidth, y0);
-    const li1 = at(frames[i + 1], -medianGap, y1);
+    const ro1 = at(frames[i + 1], halfWidth, y1);
     const lo1 = at(frames[i + 1], -halfWidth, y1);
-    push(li0, medianGap, along[i]);
-    push(li1, medianGap, along[i + 1]);
-    push(lo0, halfWidth, along[i]);
-    push(lo0, halfWidth, along[i]);
-    push(li1, medianGap, along[i + 1]);
-    push(lo1, halfWidth, along[i + 1]);
+    push(ro0, halfWidth, along[i]);
+    push(ro1, halfWidth, along[i + 1]);
+    push(lo0, -halfWidth, along[i]);
+    push(lo0, -halfWidth, along[i]);
+    push(ro1, halfWidth, along[i + 1]);
+    push(lo1, -halfWidth, along[i + 1]);
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
@@ -286,11 +295,10 @@ function buildFloor(
   return geo;
 }
 
-// The two edge curbs of one half-ribbon (outer edge and the centerline edge). A piece
-// is dropped where another track's floor covers the point just *outboard* of it at the
-// same grade — the mark of an interior (merge) edge — so merges lose their facing walls
-// and only the true outline is walled. The floor lies toward -halfWidth, so "outboard"
-// is more negative for the outer edge and more positive for the median edge.
+// The two outer-edge curbs of a full-width corridor (at +halfWidth and -halfWidth). A
+// piece is dropped where another track's floor covers the point just *outboard* of it at
+// the same grade — the mark of an interior (merge) edge — so merges lose their facing
+// walls and only the true outline is walled.
 function buildWalls(
   frames: Frame[],
   lift: number[],
@@ -299,10 +307,10 @@ function buildWalls(
   pos: number[],
   nor: number[],
 ) {
-  const { medianGap, halfWidth, surfaceY } = NETWORK_STYLE.track;
+  const { halfWidth, surfaceY } = NETWORK_STYLE.track;
   const eps = NETWORK_STYLE.track.junction.wallOutboardM;
-  for (const offset of [-medianGap, -halfWidth]) {
-    const probe = offset <= -halfWidth ? offset - eps : offset + eps;
+  for (const offset of [halfWidth, -halfWidth]) {
+    const probe = offset + Math.sign(offset) * eps;
     for (let i = 0; i < frames.length - 1; i++) {
       const a = at(frames[i], probe, 0);
       const b = at(frames[i + 1], probe, 0);

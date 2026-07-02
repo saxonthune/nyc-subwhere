@@ -225,6 +225,39 @@ function basisPos(b: Basis, nowMs: number): number {
   return b.fromDist + (b.toDist - b.fromDist) * f;
 }
 
+// One Trip's reconciliation at a poll (doc02.06): how the estimate compared to the
+// fresh frame, and how far it visibly moved when re-based. Signs — `drift` positive
+// means the estimate had run AHEAD of the freshly-observed position (reality);
+// `jump` positive means the re-base nudged the rendered train forward.
+export interface ReconcileTrip {
+  tripId: string;
+  routeId: string;
+  drift: number; // shown − fresh: the estimate's error vs reality, meters
+  jump: number; // rebased − shown: the visible teleport at re-base, meters
+}
+
+// Per-poll estimator report, logged alongside the prediction-error metric. `drift`
+// answers "how close is what we render to the freshest observation" (the visual
+// rules vs reality); `jump` answers "how much did trains visibly teleport" (the
+// re-base discontinuity the rider actually sees). Only trips present before AND
+// after the poll on the same track are reconciled; new/track-switched trips just
+// initialize and are counted in `appeared`.
+export interface EstimatorReport {
+  asOf: number;
+  matched: number;
+  appeared: number;
+  drift: { mean: number; p50: number; p95: number; signed: number };
+  jump: {
+    mean: number;
+    p50: number;
+    p95: number;
+    max: number;
+    signed: number;
+    moved: number; // trips whose render teleported more than a meter
+  };
+  trips: ReconcileTrip[];
+}
+
 // Stateful, forward-only position estimator (doc02.06 "Reconciling frames"). The
 // stateless resolveDist recomputes absolute position from each frame's noisy
 // anchor + predicted ETA, so ETA jitter snaps trains backward. The estimator
@@ -249,9 +282,11 @@ export class TripEstimator {
     snapshot: RenderSnapshot,
     tracks: Map<string, Track>,
     nowMs: number,
-  ): void {
+  ): EstimatorReport {
     this.drops.clear();
     const live = new Set<string>();
+    const recon: ReconcileTrip[] = [];
+    let appeared = 0;
     for (const trip of snapshot.trips) {
       const r = segmentOf(trip, tracks);
       if (!r.ok) {
@@ -262,15 +297,26 @@ export class TripEstimator {
       const { seg } = r;
       live.add(trip.tripId);
       const prev = this.bases.get(trip.tripId);
-      // Where the train is on screen this instant: the running estimate if we have
-      // one on the same track, else this frame's own honest placement.
-      const shown =
-        prev && prev.track === seg.track
-          ? basisPos(prev, nowMs)
-          : segPos(seg, nowMs);
+      const reconciled = prev != null && prev.track === seg.track;
+      // This frame's own honest placement is the reality proxy; `shown` is where we
+      // are actually rendering the train (the running estimate, or the fresh
+      // placement for a new/track-switched trip).
+      const fresh = segPos(seg, nowMs);
+      const shown = reconciled ? basisPos(prev as Basis, nowMs) : fresh;
       // Never backward below what we show, never below the observed station, never
-      // past the hold-short cap.
+      // past the hold-short cap. This is exactly what the train renders at right
+      // after the re-base, so its gap from `shown` is the visible jump.
       const fromDist = Math.min(Math.max(shown, seg.fromDist), seg.cap);
+      if (reconciled) {
+        recon.push({
+          tripId: trip.tripId,
+          routeId: trip.routeId,
+          drift: shown - fresh,
+          jump: fromDist - shown,
+        });
+      } else {
+        appeared++;
+      }
       this.bases.set(trip.tripId, {
         tripId: trip.tripId,
         track: seg.track,
@@ -286,6 +332,7 @@ export class TripEstimator {
     for (const id of [...this.bases.keys()]) {
       if (!live.has(id)) this.bases.delete(id);
     }
+    return estimatorReport(nowMs, recon, appeared);
   }
 
   poses(nowMs: number): TrainPose[] {
@@ -311,6 +358,49 @@ function colorFor(routeId: string): string {
     ROUTE_COLOR[routeId.replace(/X$/, "")] ??
     FALLBACK_COLOR
   );
+}
+
+function estimatorReport(
+  asOf: number,
+  recon: ReconcileTrip[],
+  appeared: number,
+): EstimatorReport {
+  const driftAbs = recon.map((r) => Math.abs(r.drift));
+  const jumpAbs = recon.map((r) => Math.abs(r.jump));
+  return {
+    asOf,
+    matched: recon.length,
+    appeared,
+    drift: {
+      mean: avg(driftAbs),
+      p50: pctl(driftAbs, 0.5),
+      p95: pctl(driftAbs, 0.95),
+      signed: avg(recon.map((r) => r.drift)),
+    },
+    jump: {
+      mean: avg(jumpAbs),
+      p50: pctl(jumpAbs, 0.5),
+      p95: pctl(jumpAbs, 0.95),
+      max: jumpAbs.length ? round1(Math.max(...jumpAbs)) : 0,
+      signed: avg(recon.map((r) => r.jump)),
+      moved: recon.filter((r) => Math.abs(r.jump) > 1).length,
+    },
+    trips: recon,
+  };
+}
+
+const round1 = (x: number) => Math.round(x * 10) / 10;
+
+function avg(xs: number[]): number {
+  if (!xs.length) return 0;
+  return round1(xs.reduce((a, b) => a + b, 0) / xs.length);
+}
+
+function pctl(xs: number[], q: number): number {
+  if (!xs.length) return 0;
+  const sorted = [...xs].sort((a, b) => a - b);
+  const i = Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1);
+  return round1(sorted[Math.max(0, i)]);
 }
 
 // Walk the track polyline to a distance, returning the point and the bearing of

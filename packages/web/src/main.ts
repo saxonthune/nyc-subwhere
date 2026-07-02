@@ -14,7 +14,7 @@ import trackGraphUrl from "./assets/track-graph.json?url";
 import trackIndexUrl from "./assets/track-index.json?url";
 import { InspectorPanel, type InspectorTarget } from "./inspector-panel";
 import { Menu } from "./menu";
-import { logPredictionError } from "./metrics";
+import { logEstimatorReport, logPredictionError } from "./metrics";
 import {
   type BoroughPolygon,
   NetworkLayer,
@@ -197,6 +197,7 @@ map.on("load", async () => {
       title: `${trip.routeId} train`,
       train: {
         routeId: trip.routeId,
+        tripId: trip.tripId,
         color: pose?.color ?? "#9a9a9a",
         heading: trip.direction === "S" ? "Southbound" : "Northbound",
         uncertain: pose?.uncertain ?? false,
@@ -238,8 +239,11 @@ map.on("load", async () => {
       clockSkew = snapshot.asOf - Date.now();
       // Fold the fresh frame into the running estimate, re-basing each Trip onto
       // where it is being rendered right now (doc02.06). Uses the just-updated
-      // clockSkew so the re-base time matches the frame loop's clock.
-      estimator.ingest(snapshot, tracks, Date.now() + clockSkew);
+      // clockSkew so the re-base time matches the frame loop's clock. The report
+      // measures the estimate against reality and its visible jumps.
+      const report = estimator.ingest(snapshot, tracks, Date.now() + clockSkew);
+      logEstimatorReport(report);
+      statsPanel.estimator = report;
     } catch (err) {
       console.warn("trip poll failed", err);
     } finally {

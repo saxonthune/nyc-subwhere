@@ -78,7 +78,47 @@ export function buildGraph(segments: SegmentCollection): TrackGraph {
   for (const c of crossings) {
     liftOverProfile(segs[c.over], projectNyc(c.point), elevation[c.over]);
   }
-  return { crossings, elevation };
+
+  const partner = pairCorridors(segs, segments);
+  return { crossings, elevation, partner };
+}
+
+// Pair each segment with its antiparallel other-direction half: same route set,
+// opposite direction, endpoints reversed within PAIR_MATCH_M. The renderer fuses a pair
+// into one full-width ribbon (no centerline seam). One-directional segments get -1.
+const PAIR_MATCH_M = 30;
+function pairCorridors(segs: Seg[], segments: SegmentCollection): number[] {
+  const partner = new Array<number>(segs.length).fill(-1);
+  const dir = segments.features.map((f) => f.properties.direction);
+  const key = segs.map((s) => [...s.routes].sort().join(","));
+  const byKey = new Map<string, number[]>();
+  segs.forEach((s, i) => {
+    const k = `${key[i]}|${dir[i]}`;
+    const g = byKey.get(k);
+    if (g) g.push(i);
+    else byKey.set(k, [i]);
+  });
+  const start = (s: Seg) => s.m[0];
+  const finish = (s: Seg) => s.m[s.m.length - 1];
+  for (let i = 0; i < segs.length; i++) {
+    if (dir[i] !== "N" || partner[i] >= 0) continue;
+    const cands = byKey.get(`${key[i]}|S`) ?? [];
+    let best = -1;
+    let bestScore = PAIR_MATCH_M * 2;
+    for (const j of cands) {
+      if (partner[j] >= 0) continue;
+      const score = dist(start(segs[i]), finish(segs[j])) + dist(finish(segs[i]), start(segs[j]));
+      if (score < bestScore) {
+        bestScore = score;
+        best = j;
+      }
+    }
+    if (best >= 0) {
+      partner[i] = best;
+      partner[best] = i;
+    }
+  }
+  return partner;
 }
 
 // Ramp the `over` segment up around a crossing, in the segment's own arc-length domain

@@ -16,6 +16,7 @@ export interface InspectorTarget {
 // already resolved to station names by main.ts — the panel only lays them out.
 export interface TrainView {
   routeId: string;
+  tripId: string; // per-train identifier from the feed
   color: string; // "#RRGGBB", the route color
   heading: string; // "Northbound" | "Southbound"
   uncertain: boolean;
@@ -94,18 +95,26 @@ export class InspectorPanel extends LitElement {
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 12px;
+      margin-bottom: 4px;
     }
     .bullet {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
+      display: grid;
+      place-items: center;
       width: 30px;
       height: 30px;
       border-radius: 50%;
       color: #fff;
       font-weight: 700;
       font-size: 16px;
+      /* Pin the glyph's line box to its own height so grid centering isn't thrown
+         off by the panel's inherited line-height (~19.6px). */
+      line-height: 1;
+    }
+    .trip-id {
+      font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #8a8a8a;
+      margin-bottom: 12px;
+      word-break: break-all;
     }
     .heading {
       color: #b9b9b9;
@@ -186,6 +195,7 @@ export class InspectorPanel extends LitElement {
               : nothing
           }
         </div>
+        <div class="trip-id">${v.tripId}</div>
         <ul class="stops">
           <li class="stop last">
             <span>
