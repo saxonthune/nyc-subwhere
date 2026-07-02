@@ -4,11 +4,13 @@ import type {
   RenderSnapshot,
   SegmentProperties,
   StationProperties,
+  TrackGraph,
   TrackIndex,
 } from "@nyc-subwhere/contract";
 import boroughsUrl from "./assets/boroughs.geojson?url";
 import segmentsUrl from "./assets/segments.geojson?url";
 import stationsUrl from "./assets/stations.geojson?url";
+import trackGraphUrl from "./assets/track-graph.json?url";
 import trackIndexUrl from "./assets/track-index.json?url";
 import { InspectorPanel, type InspectorTarget } from "./inspector-panel";
 import { Menu } from "./menu";
@@ -57,10 +59,11 @@ map.on("load", async () => {
   // 3D route tubes + station pucks + platform boxes (doc02.03) in a Three.js
   // custom layer. Fetch the baked geometry once; it is static. Segments give
   // each station's track bearing so its box lies parallel to the track.
-  const [stationsRes, segmentsRes, boroughsRes] = await Promise.all([
+  const [stationsRes, segmentsRes, boroughsRes, graphRes] = await Promise.all([
     fetch(stationsUrl),
     fetch(segmentsUrl),
     fetch(boroughsUrl),
+    fetch(trackGraphUrl),
   ]);
   const stationsGeo = (await stationsRes.json()) as {
     features: {
@@ -77,13 +80,14 @@ map.on("load", async () => {
   const boroughsGeo = (await boroughsRes.json()) as {
     features: { geometry: { coordinates: BoroughPolygon } }[];
   };
+  const graph = (await graphRes.json()) as TrackGraph;
   const lngLats = stationsGeo.features.map((f) => f.geometry.coordinates);
   const segments = segmentsGeo.features.map((f) => ({
     points: f.geometry.coordinates,
     colors: f.properties.colors ?? [f.properties.color0],
   }));
   const boroughs = boroughsGeo.features.map((f) => f.geometry.coordinates);
-  const networkLayer = new NetworkLayer(lngLats, segments, boroughs);
+  const networkLayer = new NetworkLayer(lngLats, segments, graph, boroughs);
   map.addLayer(networkLayer);
 
   // Bottom-left Menu drives the optional panels (doc01.03): a train visibility

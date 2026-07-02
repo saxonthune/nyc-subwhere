@@ -1,6 +1,13 @@
 import type { TripState } from "@nyc-subwhere/contract";
 import { transit_realtime } from "./gtfs-proto.js";
-import { buildSnapshot } from "./reshape.js";
+import { type TripMemory, buildSnapshot, pruneMemory } from "./reshape.js";
+
+// Cross-poll memory (doc02.04): recovers each trip's departed stop and detects
+// stalls by diffing consecutive snapshots. Module-scoped, so it survives within
+// a warm isolate — adequate for local dev and a single edge instance. Production
+// durability (a shared trip a rider on isolate B sees the same as isolate A)
+// wants this in a Durable Object / KV; the shape here ports directly.
+const tripMemory: TripMemory = new Map();
 
 // The eight NYCT realtime feeds (no API key required since 2023). Each covers a
 // group of Routes; we fan in across all of them and merge into one snapshot.
@@ -35,19 +42,23 @@ export default {
       const responses = await Promise.allSettled(FEEDS.map((u) => fetch(u)));
 
       const trips: TripState[] = [];
+      const seen = new Set<string>();
       let ok = 0;
       for (const r of responses) {
         if (r.status !== "fulfilled" || !r.value.ok) continue;
         const buf = new Uint8Array(await r.value.arrayBuffer());
         const msg = transit_realtime.FeedMessage.decode(buf);
-        trips.push(...buildSnapshot(msg, asOf).trips);
+        trips.push(...buildSnapshot(msg, asOf, tripMemory, seen).trips);
         ok++;
       }
       // A trip's Vehicle Position and Trip Update always share a feed, so merging
-      // per-feed snapshots is safe. Only 502 if every feed failed.
+      // per-feed snapshots is safe. Only 502 if every feed failed. Prune memory
+      // once, after every feed, so a trip is only forgotten when no feed carries
+      // it — but not on a total outage, which would wrongly forget everything.
       if (ok === 0) {
         return new Response("all upstream feeds failed", { status: 502 });
       }
+      pruneMemory(tripMemory, seen);
       return Response.json(
         { asOf, trips },
         { headers: { "cache-control": "no-store" } },

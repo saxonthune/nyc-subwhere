@@ -121,6 +121,18 @@ export const NETWORK_STYLE = {
       fadeStartZoom: 13,
       fadeEndZoom: 14.5,
     },
+
+    // Junction handling (doc02.05), driven by the baked track graph. At a junction
+    // node every incident edge is trimmed back `trimRadiusM` and the gap filled with
+    // a flat gore patch, so diverging ribbons meet cleanly and their walls stop at
+    // the mouth. At a crossing the priority edge rides a raised-cosine bridge
+    // `crossLiftM` tall over `bridgeLenM` of track, clearing the other edge's walls
+    // (wallHeight 8) so the two grade-separate instead of z-fighting. Meters.
+    junction: {
+      trimRadiusM: 22,
+      crossLiftM: 14,
+      bridgeLenM: 140,
+    },
   },
 
   // Live trains (doc01.03): a single elongated box per Trip, length along the

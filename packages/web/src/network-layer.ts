@@ -5,6 +5,7 @@ import { NETWORK_STYLE } from "./network-style";
 import {
   FlatTrackRenderer,
   type TrackBuild,
+  type TrackGraph,
   type TrackRenderer,
   type TrackSegment,
   trackTopY,
@@ -81,14 +82,17 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private readonly meterScale = this.origin.meterInMercatorCoordinateUnits();
   private readonly placements: Placement[];
   private readonly segments: TrackSegment[];
+  private readonly graph: TrackGraph;
   private readonly boroughs: BoroughPolygon[];
 
   constructor(
     stations: LngLat[],
     segments: TrackSegment[],
+    graph: TrackGraph,
     boroughs: BoroughPolygon[] = [],
   ) {
     this.segments = segments;
+    this.graph = graph;
     this.boroughs = boroughs;
     const lines = segments.map((s) => s.points);
     this.placements = stations.map((s) => this.place(s, bearingAt(s, lines)));
@@ -130,7 +134,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     const land = this.buildLand();
     if (land) this.scene.add(land);
 
-    this.trackBuild = this.trackRenderer.build(this.segments, {
+    this.trackBuild = this.trackRenderer.build(this.segments, this.graph, {
       toLocal: (p) => this.toLocal(p),
     });
     for (const obj of this.trackBuild.objects) this.scene.add(obj);
@@ -362,6 +366,10 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     const pos = new THREE.Matrix4();
     const m = new THREE.Matrix4();
     const color = new THREE.Color();
+    // Blink factor for uncertain trains (doc01.03): a ~1.6s luminance pulse
+    // applied to box + glow, so a train the Board can no longer place reads as
+    // attention-seeking rather than confidently wrong.
+    const blink = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(performance.now() / 260));
     poses.forEach((p, i) => {
       const c = this.toLocal(p.lngLat);
       // Shift onto the same side as the track ribbon (offsetLeft in the flipped
@@ -374,6 +382,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       m.multiplyMatrices(pos, rot);
       core.setMatrixAt(i, m);
       color.set(p.color);
+      if (p.uncertain) color.multiplyScalar(blink);
       core.setColorAt(i, color);
 
       this.glowPositions[3 * i] = x;

@@ -34,6 +34,14 @@ inspect *ARGS:
 tube-check:
     node packages/web/scripts/tube-check.mjs
 
+# Probe a live NYCT realtime feed: currentStatus split, dwell, field coverage (default gtfs; `all` for every feed)
+feed-probe *ARGS:
+    node packages/worker/scripts/feed-probe.mjs {{ARGS}}
+
+# Summarize captured prediction-error metrics (needs the dev file sink populated by `just dev-all`)
+metrics-report:
+    node packages/web/scripts/metrics-report.mjs
+
 # Run the web app locally (Vite dev server, HMR)
 dev:
     pnpm --filter @nyc-subwhere/web dev

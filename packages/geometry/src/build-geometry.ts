@@ -15,6 +15,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parse } from "csv-parse";
 import { parse as parseSync } from "csv-parse/sync";
+import { buildGraph } from "./build-graph";
 import { buildSegments } from "./build-segments";
 import { buildStations } from "./build-stations";
 import { buildTracks } from "./build-tracks";
@@ -116,6 +117,7 @@ async function main(): Promise<void> {
   } = buildSegments(located, normalized);
   const tracks = buildTracks(located, feedVersion);
   const stations = buildStations(canonical, normalized);
+  const graph = buildGraph(segments);
 
   // Selected canonical shapes as inspectable LineStrings (routes/direction/
   // colors so `inspect` reads them; shapeId/stops for coverage questions).
@@ -144,6 +146,7 @@ async function main(): Promise<void> {
     writeFile(path.join(OUT_DIR, "segments.geojson"), JSON.stringify(segments)),
     writeFile(path.join(OUT_DIR, "stations.geojson"), JSON.stringify(stations)),
     writeFile(path.join(OUT_DIR, "track-index.json"), JSON.stringify(tracks)),
+    writeFile(path.join(OUT_DIR, "track-graph.json"), JSON.stringify(graph)),
     writeFile(REPORT_PATH, JSON.stringify(mergeReport, null, 2)),
     writeFile(
       path.join(DEBUG_DIR, "canonical.geojson"),
@@ -155,9 +158,12 @@ async function main(): Promise<void> {
     ),
   ]);
 
+  const junctions = graph.nodes.filter((n) => n.kind === "junction").length;
+  const crossings = graph.nodes.filter((n) => n.kind === "crossing").length;
   console.log(
     `geometry: ${stations.features.length} stations, ${segments.features.length} segments ` +
       `(${mergeReport.mergedGroups} corridor-merged groups), ` +
+      `${junctions} junctions + ${crossings} crossings, ` +
       `${tracks.tracks.length} tracks (feed ${feedVersion ?? "unknown"}) -> ${path.relative(REPO_ROOT, OUT_DIR)}`,
   );
 }

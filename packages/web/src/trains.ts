@@ -16,6 +16,10 @@ export interface TrainPose {
   color: string; // "#RRGGBB"
   lngLat: LngLat;
   bearing: number; // radians, atan2(north, east) of travel direction
+  // The Board no longer trusts this position (doc01.03 "Uncertain Position"):
+  // either the trip outran its keyframes before a fresher frame arrived, or the
+  // worker flagged it stalled. The layer blinks these.
+  uncertain: boolean;
 }
 
 // NYC colors by trunk, so a handful of hexes cover every Route. Baking a
@@ -76,9 +80,11 @@ export type TripResolution =
 // The trip's Position Estimate as a scalar distance along its Track, plus the
 // Track itself. resolveTrip reads a point off this for rendering; the
 // prediction-error metric compares two of these (same trip, two snapshots,
-// one time) as a signed meters-along-track jump.
+// one time) as a signed meters-along-track jump. `pastRunway` is true once
+// nowMs has run beyond the last keyframe (or there is only one) — the position
+// is then a hold, not an interpolation (doc01.03 "Uncertain Position").
 export type DistResolution =
-  | { ok: true; track: Track; dist: number }
+  | { ok: true; track: Track; dist: number; pastRunway: boolean }
   | { ok: false; cause: DropCause; routeId: string };
 
 export function resolveDist(
@@ -97,7 +103,10 @@ export function resolveDist(
   for (const s of track.stops) distByStop.set(s.stopId, s.dist);
 
   // Keyframes are (distance-along-track, time): the last known stop, then each
-  // upcoming stop the track actually carries.
+  // upcoming stop the track carries. A stop with a later departure than arrival
+  // gets a second keyframe at the same distance — the train holds there for the
+  // dwell instead of gliding through it (doc02.04), which is where the old
+  // model ran ahead of reality.
   const kf: { dist: number; t: number }[] = [];
   const d0 = distByStop.get(trip.lastKnownStop.stopId);
   if (d0 == null) {
@@ -106,10 +115,15 @@ export function resolveDist(
   kf.push({ dist: d0, t: trip.lastKnownStop.at });
   for (const u of trip.upcoming) {
     const d = distByStop.get(u.stopId);
-    if (d != null) kf.push({ dist: d, t: u.arrival });
+    if (d == null) continue;
+    kf.push({ dist: d, t: u.arrival });
+    if (u.departure != null && u.departure > u.arrival) {
+      kf.push({ dist: d, t: u.departure });
+    }
   }
 
-  return { ok: true, track, dist: distAt(kf, nowMs) };
+  const pastRunway = kf.length === 1 || nowMs > kf[kf.length - 1].t;
+  return { ok: true, track, dist: distAt(kf, nowMs), pastRunway };
 }
 
 export function resolveTrip(
@@ -124,6 +138,7 @@ export function resolveTrip(
     pose: {
       tripId: trip.tripId,
       color: colorFor(trip.routeId),
+      uncertain: r.pastRunway || trip.status === "stalled",
       ...pointAt(r.track, r.dist),
     },
   };
