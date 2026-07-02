@@ -116,6 +116,7 @@ map.on("load", async () => {
   const menu = new Menu();
   menu.options = [
     { label: "Toggle trains", onSelect: () => networkLayer.toggleTrains() },
+    { label: "Toggle lighting", onSelect: () => networkLayer.toggleLighting() },
     {
       label: "Advanced stats",
       onSelect: () => {

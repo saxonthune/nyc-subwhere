@@ -5,9 +5,11 @@
 // patching is needed. The union's boundary rings are the outline the renderer extrudes
 // into platform edges.
 //
-// Phase 1 is flat: every Segment unions at one grade. Grade-separated crossings (union
-// per grade band, drawn at different heights) are a later pass — until then a crossing
-// dissolves into the surface like a merge.
+// Grade separation (doc02.07) is handled by a constant per-corridor height (build-graph),
+// not by cutting the outline: a crossing's over track sits a small step above the under
+// track, so their floors resolve by depth with no bump. The silhouette therefore unions
+// the whole flat network — one continuous platform outline — and the raised floors simply
+// hover a few centimetres above it.
 //
 // Clipper (integer coordinates) rather than a float boolean library: the float clippers
 // go non-robust on a dense overlapping network ("unable to complete output ring"),
@@ -42,9 +44,9 @@ const toInt = (p: LngLat): IntPoint => {
 const fromInt = (p: IntPoint): LngLat =>
   unprojectNyc([p.X / SCALE + ORIGIN[0], p.Y / SCALE + ORIGIN[1]]);
 
-// The whole network's dissolved outline: buffer every Segment into a ribbon, union the
-// ribbons, and return each polygon as [outerRing, ...holeRings] in LngLat. The renderer
-// extrudes each ring into a platform edge.
+// The network's dissolved outline: buffer every Segment into a ribbon, union them, and
+// return each polygon as [outerRing, ...holeRings] in LngLat. The renderer extrudes each
+// ring into a platform edge.
 export function buildSilhouette(segments: SegmentCollection): LngLat[][][] {
   const ribbons: IntPoint[][] = [];
   for (const f of segments.features) {

@@ -46,8 +46,8 @@ const ROUTE_COLOR: Record<string, string> = {
   R: "#FCCC0A",
   W: "#FCCC0A",
   G: "#6CBE45",
-  J: "#996633",
-  Z: "#996633",
+  J: "#724A29",
+  Z: "#724A29",
   L: "#A7A9AC",
   // Shuttles (42 St, Franklin Av, Rockaway Park) all render dark grey.
   GS: "#808183",

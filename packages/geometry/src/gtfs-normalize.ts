@@ -39,6 +39,14 @@ function normalizeColor(raw: string | undefined): string {
   return hex ? `#${hex}` : "#888888";
 }
 
+// Deliberate departures from the feed's route_color. J/Z ship as a brown
+// (#8E5C33) close enough to the B/D/F/M orange to read as the same line when
+// small; darkened here so the two stay distinct.
+const ROUTE_COLOR_OVERRIDE: Record<string, string> = {
+  J: "#724A29",
+  Z: "#724A29",
+};
+
 export function normalize(
   stopRows: Row[],
   routeRows: Row[],
@@ -60,7 +68,10 @@ export function normalize(
 
   const routeColor = new Map<string, string>();
   for (const r of routeRows)
-    routeColor.set(r.route_id, normalizeColor(r.route_color));
+    routeColor.set(
+      r.route_id,
+      ROUTE_COLOR_OVERRIDE[r.route_id] ?? normalizeColor(r.route_color),
+    );
 
   const shapePoints = new Map<string, LngLat[]>();
   const grouped = new Map<string, Row[]>();

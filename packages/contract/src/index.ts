@@ -114,14 +114,10 @@ export type SegmentCollection = FeatureCollection<
   SegmentProperties
 >;
 
-// --- Track junctions (doc02.05) -----------------------------------------
-// Where two tracks cross at different grade (a transversal interior intersection,
-// not a merge). Facts only — the pipeline finds the crossings and who passes over.
-// The grade separation is then baked as an elevation profile rather than left to the
-// renderer: for each segment, a per-vertex vertical offset (meters, parallel to that
-// feature's coordinates) that ramps the `over` side up over a crossing and back down,
-// so floor and walls lift together with no tear. Indices reference
-// SegmentCollection.features; `elevation` is parallel to features (empty => all zero).
+// --- Track junctions (doc02.07) -----------------------------------------
+// Where two tracks overlap (a crossing or a sustained near-parallel run). Facts only —
+// the pipeline finds the overlaps and who passes over, and assigns each segment a constant
+// grade level so overlapping floors resolve by depth rather than z-fighting.
 
 export interface TrackCrossing {
   point: LngLat;
@@ -140,7 +136,11 @@ export interface TrackMerge {
 
 export interface TrackGraph {
   crossings: TrackCrossing[];
-  elevation: number[][];
+  // Constant grade level per segment (doc02.07): a corridor sits one level above every
+  // corridor it crosses/overlaps (longest path over the overlap graph). The renderer draws
+  // higher levels in front so overlaps resolve in the depth buffer with no z-fighting and
+  // no geometric bump. Parallel to features; 0 is ground.
+  grade: number[];
   // Antiparallel partner index for each segment (the opposite-direction half of the
   // same corridor), or -1 if one-directional. The renderer fuses a pair into a single
   // full-width track ribbon so there is no centerline seam. Parallel to features.

@@ -8,14 +8,16 @@ export type LngLat = [number, number];
 // share it — one entry for a solid trunk, several for a shared one.
 export type TrackSegment = { points: LngLat[]; colors: string[] };
 
-// The junctions (doc02.05) baked by the geometry pipeline: `over`/`under` index the
-// segments array; `elevation[i]` is the per-vertex vertical offset (meters) for
-// segment i, parallel to its points, ramping the over side of a crossing up and back.
+// The junctions (doc02.07) baked by the geometry pipeline: `over`/`under` index the
+// segments array; `grade[i]` is segment i's constant grade level (0 = ground), used as a
+// draw order so overlapping floors resolve by depth.
 export type TrackCrossing = { point: LngLat; over: number; under: number };
 export type TrackMerge = { branch: number; trunk: number; attach: LngLat };
 export type TrackGraph = {
   crossings: TrackCrossing[];
-  elevation: number[][];
+  // Constant grade level per segment (doc02.07): higher levels are drawn in front so
+  // overlapping floors resolve by depth. Parallel to segments; 0 is ground.
+  grade: number[];
   partner: number[];
   merges: TrackMerge[];
   // The dissolved network outline (doc02.07): each polygon is [outerRing, ...holeRings]
@@ -64,34 +66,33 @@ export function trackTopY(): number {
 type Frame = { cx: number; cz: number; nx: number; nz: number };
 type P2 = { x: number; z: number };
 
-// One wide flat track per corridor (doc02.05). A corridor's two directions are fused
-// into a single full-width ribbon (the partner segment is skipped), so there is no
-// centerline seam to reason about — the median wall problem simply doesn't exist.
-//   floor  — one full-width caret ribbon (-halfWidth..+halfWidth) on the corridor
-//            centerline, lifted per-vertex by the baked crossing elevation. Where a
-//            branch merges into a trunk it is extended to run along the trunk (sampling
-//            the trunk centerline) and rides the baked merge-lift above it, so the merge
-//            reads as joining-and-running-parallel rather than crossing-and-stopping.
-//   walls  — the boundary of the assembled floor surface: each floor's outer rails are
-//            welded and a rail used by exactly one floor gets a curb, one shared by two
-//            (a tiled junction, or two coplanar floors) gets none. No thresholds — the
-//            mesh topology decides; crossings, at different grades, never weld.
+// A raised platform network (doc02.07). Junction tessellation is split:
+//   floor  — one full-width caret ribbon (-halfWidth..+halfWidth) per corridor, flat on the
+//            corridor centerline at `surfaceY` (a corridor's two directions are fused, the
+//            partner segment skipped, so there is no centerline seam). Floors carry the
+//            per-corridor palette for the caret shader and are grouped by baked grade level
+//            (doc02.07): each level is one mesh with a depth offset, so where floors overlap
+//            the higher grade wins the depth test — junctions read without z-fighting, and
+//            because grade is draw order rather than height, nothing bumps or floats.
+//   walls  — the baked silhouette (doc02.07): every centerline buffered and boolean-unioned
+//            in the geometry pipeline, so merges/branches dissolve into one outline with no
+//            seam. Each outline ring is extruded down from the platform top to ground as a
+//            glowing edge. No boundary extraction or per-junction special-casing here.
 // Floors merge into one caret-shader mesh with a face→segment map for picking; walls
-// merge into one unlit grey mesh (not pickable — clicks fall through to the floor).
+// merge into one unlit emissive mesh (not pickable — clicks fall through to the floor).
 export class FlatTrackRenderer implements TrackRenderer {
   build(
     segments: TrackSegment[],
     graph: TrackGraph,
     ctx: TrackContext,
   ): TrackBuild {
-    // Each segment's cross-section frames paired with its baked per-vertex lift, both
-    // deduped together so the lift stays aligned to the geometry it raises.
-    const built = segments.map((seg, si) => {
-      const kept = dedupeWithLift(seg.points, graph.elevation[si] ?? []);
-      const local = kept.pts.map((p) => ctx.toLocal(p));
-      return local.length >= 2
-        ? { frames: framesOf(local), lift: kept.lift }
-        : undefined;
+    // Each corridor's cross-section frames. Floors are flat at `surfaceY`; grade is a draw
+    // order, not a height (doc02.07), so the geometry never bumps.
+    const built = segments.map((seg) => {
+      const local = dedupeWithLift(seg.points, []).pts.map((p) =>
+        ctx.toLocal(p),
+      );
+      return local.length >= 2 ? framesOf(local) : undefined;
     });
 
     // A corridor is drawn once, as a full-width ribbon. Own it if one-directional or the
@@ -100,68 +101,30 @@ export class FlatTrackRenderer implements TrackRenderer {
       const p = graph.partner[si];
       return p < 0 || si < p;
     };
-    const corridorOf = (si: number) => (owns(si) ? si : graph.partner[si]);
 
-    // Junction protrusion (doc02.05): a branch was conformed only to *touch* its trunk
-    // tangentially and then stop, which reads as crossing-and-stopping. Extend it to RUN
-    // ALONG the trunk for `mergeProtrudeM` by sampling the trunk's own centerline forward
-    // from the join — parallel by construction, whatever the approach angle — riding the
-    // baked merge-lift above the trunk (so the overlap doesn't z-fight). Held as extra
-    // frames+lift to graft onto the branch's merge end (head or tail).
-    const mergeProtrudeM = NETWORK_STYLE.track.mergeProtrudeM;
-    const headExt = new Array<Extension | null>(segments.length).fill(null);
-    const tailExt = new Array<Extension | null>(segments.length).fill(null);
-    for (const m of graph.merges) {
-      const bc = corridorOf(m.branch);
-      const tc = corridorOf(m.trunk);
-      const bb = built[bc];
-      const tb = built[tc];
-      if (!bb || !tb) continue;
-      const a = ctx.toLocal(m.attach);
-      const Bf = bb.frames;
-      const last = Bf.length - 1;
-      const endIsLast =
-        frameDistTo(Bf[last], a.x, a.z) < frameDistTo(Bf[0], a.x, a.z);
-      const tip = endIsLast ? Bf[last] : Bf[0];
-      const prev = endIsLast ? Bf[last - 1] : Bf[1];
-      const fwd = { x: tip.cx - prev.cx, z: tip.cz - prev.cz };
-      const tipLift = endIsLast ? bb.lift[last] : bb.lift[0];
-      const ext = trunkProtrusion(tb.frames, a, fwd, mergeProtrudeM, tipLift);
-      if (ext.frames.length < 2) continue;
-      if (endIsLast) tailExt[bc] = ext;
-      else headExt[bc] = ext;
-    }
-
-    const floors: { geo: THREE.BufferGeometry; seg: number }[] = [];
-    const rails: RailEdge[] = [];
-    built.forEach((b, si) => {
-      if (!b || !owns(si)) return;
-      let frames = b.frames;
-      let lift = b.lift;
-      const he = headExt[si];
-      const te = tailExt[si];
-      if (he) {
-        // head extension runs outward from the branch start; reverse so it leads into it.
-        frames = [...he.frames.slice().reverse(), ...frames];
-        lift = [...he.lift.slice().reverse(), ...lift];
-      }
-      if (te) {
-        frames = [...frames, ...te.frames];
-        lift = [...lift, ...te.lift];
-      }
-      const along = southOriginArcLength(frames);
-      const f = buildFloor(frames, along, segments[si].colors, lift);
-      floors.push({ geo: f.geo, seg: si });
-      rails.push(...f.rails);
-    });
-
-    // Walls = the boundary of the assembled floor surface. A rail edge used by exactly
-    // one floor is an outline edge and gets a curb; a rail shared by two floors (a tiled
-    // merge) is interior and gets none. No proximity thresholds — the mesh topology
-    // decides. Floors at different grades (a crossing) don't weld, so both keep walls.
+    // Platform edges (doc02.07): extrude each baked silhouette ring down from the platform
+    // top to ground. The union computed the whole flat outline, so there is no boundary
+    // extraction and no per-junction special-casing.
     const wallPos: number[] = [];
     const wallNor: number[] = [];
-    extrudeBoundary(rails, wallPos, wallNor);
+    buildSilhouetteWalls(graph.silhouette, ctx, wallPos, wallNor);
+
+    // Group floors by grade level. Each level is one mesh with a depth offset so higher
+    // grades win the depth test where floors overlap — crossings and near-parallel runs
+    // resolve cleanly without lifting the geometry.
+    const byLevel = new Map<
+      number,
+      { geo: THREE.BufferGeometry; seg: number }[]
+    >();
+    built.forEach((frames, si) => {
+      if (!frames || !owns(si)) return;
+      const along = southOriginArcLength(frames);
+      const level = graph.grade[si] ?? 0;
+      const geo = buildFloor(frames, along, segments[si].colors);
+      const g = byLevel.get(level);
+      if (g) g.push({ geo, seg: si });
+      else byLevel.set(level, [{ geo, seg: si }]);
+    });
 
     const objects: THREE.Object3D[] = [];
     const maps = new Map<THREE.Object3D, FaceMap>();
@@ -177,12 +140,21 @@ export class FlatTrackRenderer implements TrackRenderer {
       objects.push(new THREE.Mesh(geo, greyMaterial()));
     }
 
-    const caretMat = caretMaterial();
-    const floorMesh = mergeEntries(floors, caretMat);
-    if (floorMesh) {
-      floorMesh.mesh.userData.kind = "segment";
-      objects.push(floorMesh.mesh);
-      maps.set(floorMesh.mesh, floorMesh.faceMap);
+    const caretMats: THREE.ShaderMaterial[] = [];
+    for (const [level, entries] of byLevel) {
+      const mat = caretMaterial();
+      // Pull higher grades toward the camera in the depth buffer (a decal-style bias), so a
+      // busier line drawn on top of what it crosses wins without any height difference.
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -level;
+      mat.polygonOffsetUnits = -level * 4;
+      caretMats.push(mat);
+      const floorMesh = mergeEntries(entries, mat);
+      if (floorMesh) {
+        floorMesh.mesh.userData.kind = "segment";
+        objects.push(floorMesh.mesh);
+        maps.set(floorMesh.mesh, floorMesh.faceMap);
+      }
     }
 
     return {
@@ -194,79 +166,21 @@ export class FlatTrackRenderer implements TrackRenderer {
       },
       setZoom: (zoom, metersPerPixel) => {
         const { chevron } = NETWORK_STYLE.track;
-        caretMat.uniforms.uSpacing.value = Math.max(
+        const uSpacing = Math.max(
           chevron.spacingM,
           chevron.minCellPx * metersPerPixel,
         );
         const t =
           (zoom - chevron.fadeStartZoom) /
           (chevron.fadeEndZoom - chevron.fadeStartZoom);
-        caretMat.uniforms.uDetail.value = Math.min(1, Math.max(0, t));
+        const uDetail = Math.min(1, Math.max(0, t));
+        for (const mat of caretMats) {
+          mat.uniforms.uSpacing.value = uSpacing;
+          mat.uniforms.uDetail.value = uDetail;
+        }
       },
     };
   }
-}
-
-// A longitudinal outer-edge of a floor (a "rail"): its two endpoints at floor grade and
-// the unit horizontal outward normal (which way a wall on it faces). Walls are the rails
-// that bound the surface — see extrudeBoundary.
-type RailEdge = { a: V3; b: V3; ox: number; oz: number };
-
-// Boundary extraction: weld rail endpoints by quantized position, then a rail used by
-// exactly one floor is an outline edge (extrude a curb) while one shared by two floors —
-// a tiled merge (Stage C) — is interior and gets none. Welding includes Y, so floors at
-// different grades (a crossing) never share an edge and both keep their walls.
-function extrudeBoundary(rails: RailEdge[], pos: number[], nor: number[]) {
-  const Q = 0.5; // weld quantum, meters
-  const ids = new Map<string, number>();
-  const idOf = (p: V3): number => {
-    const k = `${Math.round(p.x / Q)},${Math.round(p.y / Q)},${Math.round(p.z / Q)}`;
-    let id = ids.get(k);
-    if (id === undefined) {
-      id = ids.size;
-      ids.set(k, id);
-    }
-    return id;
-  };
-  const edges = new Map<string, { rail: RailEdge; count: number }>();
-  for (const r of rails) {
-    const ia = idOf(r.a);
-    const ib = idOf(r.b);
-    const key = ia < ib ? `${ia}_${ib}` : `${ib}_${ia}`;
-    const e = edges.get(key);
-    if (e) e.count++;
-    else edges.set(key, { rail: r, count: 1 });
-  }
-  for (const { rail, count } of edges.values()) {
-    if (count === 1) curbFromEdge(rail, pos, nor);
-  }
-}
-
-// A straddling curb along a rail: inner face, outer face, and top cap, from the rail's
-// floor grade up by wallHeight, `wallThickness` wide across the outward normal.
-function curbFromEdge(r: RailEdge, pos: number[], nor: number[]) {
-  const { wallHeight, wallThickness } = NETWORK_STYLE.track;
-  const t = wallThickness / 2;
-  const { a, b, ox, oz } = r;
-  const off = (p: V3, s: number, y: number): V3 => ({
-    x: p.x + ox * t * s,
-    y,
-    z: p.z + oz * t * s,
-  });
-  const aIn = off(a, -1, a.y);
-  const aInT = off(a, -1, a.y - wallHeight);
-  const aOut = off(a, 1, a.y);
-  const aOutT = off(a, 1, a.y - wallHeight);
-  const bIn = off(b, -1, b.y);
-  const bInT = off(b, -1, b.y - wallHeight);
-  const bOut = off(b, 1, b.y);
-  const bOutT = off(b, 1, b.y - wallHeight);
-  pushTri(pos, nor, aIn, bIn, aInT);
-  pushTri(pos, nor, aInT, bIn, bInT);
-  pushTri(pos, nor, aOut, aOutT, bOut);
-  pushTri(pos, nor, bOut, aOutT, bOutT);
-  pushTri(pos, nor, aInT, bInT, aOutT);
-  pushTri(pos, nor, aOutT, bInT, bOutT);
 }
 
 // mergeGeometries concatenates in push order (useGroups=false), so the running
@@ -296,46 +210,35 @@ function mergeEntries(
 }
 
 // One full-width corridor floor: a quad strip from the right edge (+halfWidth) to the
-// left edge (-halfWidth), at `surfaceY` plus the per-vertex crossing lift. Every vertex
-// carries its across-track distance from center (`aU`, signed), its along-track distance
-// from the south end (`aV`), and the palette padded to 4 with a color count. The caret
-// shader uses |aU|, so the chevron apex sits on the centerline and points north.
+// left edge (-halfWidth), flat at `surfaceY`. Every vertex carries its across-track
+// distance from center (`aU`, signed), its along-track distance from the south end (`aV`),
+// and the palette padded to 4 with a color count. The caret shader uses |aU|, so the
+// chevron apex sits on the centerline and points north.
 function buildFloor(
   frames: Frame[],
   along: number[],
   colors: string[],
-  lift: number[],
-): { geo: THREE.BufferGeometry; rails: RailEdge[] } {
+): THREE.BufferGeometry {
   const { halfWidth, surfaceY } = NETWORK_STYLE.track;
   const pos: number[] = [];
   const uA: number[] = [];
   const vA: number[] = [];
-  const rails: RailEdge[] = [];
   const push = (p: V3, u: number, v: number) => {
     pos.push(p.x, p.y, p.z);
     uA.push(u);
     vA.push(v);
   };
   for (let i = 0; i < frames.length - 1; i++) {
-    const y0 = surfaceY + lift[i];
-    const y1 = surfaceY + lift[i + 1];
-    const ro0 = at(frames[i], halfWidth, y0);
-    const lo0 = at(frames[i], -halfWidth, y0);
-    const ro1 = at(frames[i + 1], halfWidth, y1);
-    const lo1 = at(frames[i + 1], -halfWidth, y1);
+    const ro0 = at(frames[i], halfWidth, surfaceY);
+    const lo0 = at(frames[i], -halfWidth, surfaceY);
+    const ro1 = at(frames[i + 1], halfWidth, surfaceY);
+    const lo1 = at(frames[i + 1], -halfWidth, surfaceY);
     push(ro0, halfWidth, along[i]);
     push(ro1, halfWidth, along[i + 1]);
     push(lo0, -halfWidth, along[i]);
     push(lo0, -halfWidth, along[i]);
     push(ro1, halfWidth, along[i + 1]);
     push(lo1, -halfWidth, along[i + 1]);
-    // The two rails of this strip, with their outward normal (averaged over the step),
-    // for boundary extraction into walls.
-    const nx = frames[i].nx + frames[i + 1].nx;
-    const nz = frames[i].nz + frames[i + 1].nz;
-    const nl = Math.hypot(nx, nz) || 1;
-    rails.push({ a: ro0, b: ro1, ox: nx / nl, oz: nz / nl });
-    rails.push({ a: lo0, b: lo1, ox: -nx / nl, oz: -nz / nl });
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
@@ -347,99 +250,43 @@ function buildFloor(
   for (let i = 1; i < nor.length; i += 3) nor[i] = 1;
   geo.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
   attachPalette(geo, colors);
-  return { geo, rails };
+  return geo;
+}
+
+// Platform edges from the baked silhouette (doc02.07): each ring is a closed loop of the
+// dissolved outline; extrude every edge into a vertical curtain from the platform top
+// (`surfaceY`) down by `wallHeight`, so the glowing side faces read as the raised
+// platform's walls. Unlit/DoubleSide, so winding need not be tracked.
+function buildSilhouetteWalls(
+  silhouette: LngLat[][][],
+  ctx: TrackContext,
+  pos: number[],
+  nor: number[],
+) {
+  const { surfaceY, wallHeight } = NETWORK_STYLE.track;
+  const top = surfaceY;
+  const bot = surfaceY - wallHeight;
+  for (const poly of silhouette) {
+    for (const ring of poly) {
+      const pts = ring.map((p) => ctx.toLocal(p));
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i];
+        const b = pts[(i + 1) % pts.length];
+        const aT = { x: a.x, y: top, z: a.z };
+        const aB = { x: a.x, y: bot, z: a.z };
+        const bT = { x: b.x, y: top, z: b.z };
+        const bB = { x: b.x, y: bot, z: b.z };
+        pushTri(pos, nor, aT, bT, aB);
+        pushTri(pos, nor, aB, bT, bB);
+      }
+    }
+  }
 }
 
 type V3 = { x: number; y: number; z: number };
 
 function at(f: Frame, off: number, y: number): V3 {
   return { x: f.cx + f.nx * off, y, z: f.cz + f.nz * off };
-}
-
-function frameDistTo(f: Frame, x: number, z: number): number {
-  return Math.hypot(f.cx - x, f.cz - z);
-}
-
-// Extra frames (with per-frame lift) grafted onto a branch's merge end so it runs along
-// the trunk rather than stopping at it.
-type Extension = { frames: Frame[]; lift: number[] };
-
-// Sample the trunk centerline forward from a branch's attach point for `protrudeM`, so
-// the branch can be extended to run collinear with — i.e. exactly parallel to — the
-// trunk regardless of how it approached. Frames take the trunk's center + normal, each
-// at the given lift (the branch rides above the trunk on the baked merge-lift).
-function trunkProtrusion(
-  trunk: Frame[],
-  attach: { x: number; z: number },
-  fwd: { x: number; z: number },
-  protrudeM: number,
-  lift: number,
-): Extension {
-  const cum = [0];
-  for (let i = 1; i < trunk.length; i++)
-    cum.push(
-      cum[i - 1] +
-        Math.hypot(
-          trunk[i].cx - trunk[i - 1].cx,
-          trunk[i].cz - trunk[i - 1].cz,
-        ),
-    );
-  const total = cum[cum.length - 1];
-
-  // arc position of the attach (nearest projection onto the trunk polyline)
-  let bd = Number.POSITIVE_INFINITY;
-  let s0 = 0;
-  for (let i = 0; i < trunk.length - 1; i++) {
-    const dx = trunk[i + 1].cx - trunk[i].cx;
-    const dz = trunk[i + 1].cz - trunk[i].cz;
-    const l2 = dx * dx + dz * dz || 1;
-    let t =
-      ((attach.x - trunk[i].cx) * dx + (attach.z - trunk[i].cz) * dz) / l2;
-    t = Math.min(1, Math.max(0, t));
-    const d = Math.hypot(
-      attach.x - (trunk[i].cx + t * dx),
-      attach.z - (trunk[i].cz + t * dz),
-    );
-    if (d < bd) {
-      bd = d;
-      s0 = cum[i] + t * (cum[i + 1] - cum[i]);
-    }
-  }
-
-  // which way along the trunk matches the branch's travel
-  const near = sampleTrunkAt(trunk, cum, s0);
-  const ahead = sampleTrunkAt(trunk, cum, Math.min(total, s0 + 1));
-  const dir =
-    (ahead.cx - near.cx) * fwd.x + (ahead.cz - near.cz) * fwd.z >= 0 ? 1 : -1;
-
-  const frames: Frame[] = [];
-  const lifts: number[] = [];
-  const stepM = 12;
-  for (let d = 0; d <= protrudeM; d += stepM) {
-    const s = s0 + dir * d;
-    if (s < 0 || s > total) break;
-    frames.push(sampleTrunkAt(trunk, cum, s));
-    lifts.push(lift);
-  }
-  return { frames, lift: lifts };
-}
-
-// A Frame (center + unit normal) interpolated at arc-length `s` along a polyline of frames.
-function sampleTrunkAt(trunk: Frame[], cum: number[], s: number): Frame {
-  let i = 1;
-  while (i < cum.length - 1 && cum[i] < s) i++;
-  const t = (s - cum[i - 1]) / (cum[i] - cum[i - 1] || 1);
-  const a = trunk[i - 1];
-  const b = trunk[i];
-  const nx = a.nx + (b.nx - a.nx) * t;
-  const nz = a.nz + (b.nz - a.nz) * t;
-  const nl = Math.hypot(nx, nz) || 1;
-  return {
-    cx: a.cx + (b.cx - a.cx) * t,
-    cz: a.cz + (b.cz - a.cz) * t,
-    nx: nx / nl,
-    nz: nz / nl,
-  };
 }
 
 function pushTri(pos: number[], nor: number[], p: V3, q: V3, r: V3) {

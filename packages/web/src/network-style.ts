@@ -34,7 +34,7 @@ export const NETWORK_STYLE = {
     // than a flat bright slab washed out by ambient. height sets the cliff depth —
     // with water dropped to lighting.water.level, the exposed face reads tall.
     color: "#2b3138",
-    height: 44,
+    height: 100,
   },
   water: {
     // The near-shore blue. Kept dark enough to stay under the bloom threshold, so
@@ -44,7 +44,7 @@ export const NETWORK_STYLE = {
     // Dropped well below the land's top face (y=0) so the shoreline is a tall cliff
     // and the water sits far below like an abyss. Still above the land's base
     // (-height) so the land stays rooted in the water rather than floating.
-    level: -24,
+    level: -60,
     // The water disc's radius (meters); large enough to reach past every borough.
     radius: 70_000,
     // Shoreline-relative blue (lighting.ts): the blue is keyed to distance from the
@@ -106,65 +106,41 @@ export const NETWORK_STYLE = {
 
   // 3D station geometry (doc02.03), rendered in a Three.js custom layer. Sizes are
   // in meters (the layer builds meshes in a meter-scaled local frame). The puck is
-  // a flat disc sitting at ground level; the box is a plinth beneath it, revealed
-  // only past `boxMinZoom` (semantic-zoom LOD, doc01.03).
+  // a flat disc sitting at ground level, shown at every zoom.
   puck: {
     radius: 45,
-    // A flat disc barely proud of the tube: height + clearanceOverTube keep its
-    // top only just above the tube top (2·tube.radius), so it reads as a point
-    // on the line, not a pillar.
-    height: 4,
+    // The puck top is seated at `clearanceOverTube` above the tube top and the
+    // disc extends downward by `height`, so raising `height` sinks its underside
+    // deeper without moving the top.
+    height: 20,
     // The puck's color/emissive glow is owned by the lighting system
-    // (lighting.station); this block keeps only its geometry and zoom behavior.
-    // Semantic-zoom fade (doc01.03): fully opaque at/below fadeStartZoom, fully
-    // gone at/above fadeEndZoom, so close in the tubes pass over the platform box
-    // with no puck occluding them.
-    fadeStartZoom: 15.5,
-    fadeEndZoom: 17,
-    // Seated so the puck top clears the tube top by this much, reading as a point
-    // on the line when zoomed out.
-    clearanceOverTube: 1,
-  },
-  box: {
-    // Rectangular platform: length runs along the track, width across it.
-    length: 90,
-    width: 46,
-    depth: 30,
-    // Dark plinth: it sits below the network and should recede, not bloom.
-    color: "#20242a",
-    minZoom: 15,
+    // (lighting.station); this block keeps only its geometry. Pucks stay visible
+    // at every zoom.
+    // Seated so the puck top clears the tube top by this much.
+    clearanceOverTube: 3,
   },
 
-  // 3D route track (doc02.03), one wide flat ribbon built by the swappable
-  // TrackRenderer (track-render.ts). All meters. A corridor's two directions each
-  // draw as a half-ribbon offset to its own left, tiling one floor `halfWidth` from
-  // the center on each side, at height `surfaceY`. `medianGap` is a thin seam kept
-  // clear at the centerline. A grey wall of `wallThickness`×`wallHeight` stands on
-  // each outer edge only (none down the median), with a wing flanging `wingWidth`
-  // out past it at `wingY`. Expect these to change often as the look is tuned.
+  // 3D route track (doc02.03/doc02.07), a raised platform network built by the swappable
+  // TrackRenderer (track-render.ts). All meters. Each corridor draws one full-width caret
+  // floor `halfWidth` either side of its centerline at height `surfaceY`. The platform
+  // edges are the baked silhouette (doc02.07) — the whole network's centerlines buffered by
+  // `halfWidth` and boolean-unioned, so junctions dissolve with no seam — extruded down
+  // from `surfaceY` by `wallHeight` as glowing side faces. `halfWidth` MUST match
+  // HALF_WIDTH_M in build-silhouette.ts so floors and edges line up.
   track: {
     halfWidth: 26,
-    medianGap: 0,
     surfaceY: 6,
     wallHeight: 6,
-    wallThickness: 1.2,
-    wingWidth: 3,
-    wingY: 2,
-    // Edge light-rail (doc02.05): the floor boundary is extruded into a thin neon
-    // piping rather than a grey retaining wall — an emissive strip that blooms under
-    // the scene pass, so the ribbon reads as a lit Tron ribbon outlined in light.
-    // `edgeColor` is the piping color; `edgeEmissiveIntensity` scales its self-glow
-    // (above the bloom threshold so it always glows). Kept a cool near-white so it
-    // frames every route color without competing with the floor palette.
+    // Platform edge glow (doc02.07): the silhouette side faces are emissive so they bloom
+    // under the scene pass, reading as a Tron edge of light rather than a retaining wall.
+    // `edgeColor` is a cool near-white that frames every route color; `edgeEmissiveIntensity`
+    // scales the self-glow (above the bloom threshold so it always glows). Putting the glow
+    // on vertical faces also keeps it off the top-down far view, so it doesn't shimmer.
     edgeColor: "#dfefff",
     edgeEmissiveIntensity: 1.2,
     // Live trains ride this far to the left of travel — the center of their own
     // direction's half-ribbon (roughly halfWidth/2), so a train sits on its track.
     trainOffsetM: 13,
-    // Merge protrusion (doc02.05): after a branch is conformed onto its trunk it is
-    // extended to run along the trunk this far, so the junction reads as the branch
-    // joining and running parallel rather than crossing and stopping.
-    mergeProtrudeM: 35,
     // Caret marks on the floor (doc01.03): the ribbon is partitioned into chevron
     // cells by one bent coordinate `g = along + |across|·tan(bendDeg)`; each cell is
     // one palette color and the black caret line sits exactly on the cell boundary,
@@ -186,12 +162,11 @@ export const NETWORK_STYLE = {
       fadeEndZoom: 14.5,
     },
 
-    // Junction handling (doc02.05). Grade separation is baked as a per-vertex elevation
-    // profile in the geometry pipeline (build-graph.ts) and branch tails are conformed
-    // onto their trunks (conform-merges.ts). The renderer lifts floor and walls by the
-    // profile, fuses each corridor's two directions into one full-width ribbon, and
-    // derives walls as the boundary of the assembled floor surface (track-render.ts) —
-    // so there are no wall-suppression thresholds left to tune.
+    // Junction handling (doc02.07). Merges and branches are dissolved by the baked
+    // silhouette union (build-silhouette.ts), not by per-junction reshaping — the renderer
+    // just extrudes the union outline. Grade-separated crossings (union per grade band,
+    // drawn at different heights) are a later pass; until then a crossing dissolves flat
+    // like a merge.
   },
 
   // Live trains (doc01.03): a single elongated box per Trip, length along the

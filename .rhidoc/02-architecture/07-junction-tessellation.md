@@ -64,10 +64,17 @@ straight run.
   simply-connected region through the throat. No conform, no lift, no protrusion,
   no gore patch: the fill is whatever the union covers, and the outline is its
   boundary.
-- **At-grade crossing** — the two ribbons are in different grade groups, so they
-  are never unioned. Each keeps its own boundary (its walls) and they are drawn at
-  `y_over` and `y_under`. The separation is a consequence of grouping, not of a
-  proximity threshold.
+- **Grade-separated crossing** — floors are drawn *flat* (no height change at all); grade
+  is a **draw order**, not an elevation. Each corridor gets a constant integer grade level:
+  one above every corridor it overlaps, computed as a longest-path level over the overlap
+  graph (over must exceed under, relaxed to a fixed point; the priority order is total so
+  the graph is acyclic). Floors are grouped by level into one mesh per level, and each
+  level's material carries a depth-buffer offset (`polygonOffset`, decal-style) that pulls
+  higher grades toward the camera. Where two floors overlap, the higher grade wins the
+  depth test and shows on top; elsewhere nothing changes. Because the resolution is pure
+  draw order, there is no bump, no hover, and no void under a raised floor — the platform
+  stays perfectly flat. Overlaps come from two sources (see below), so crossings, merge
+  throats, and near-parallel express/local runs all resolve the same way.
 - **Walls / edges** — the boundary rings of the dissolved MultiPolygon *are* the
   wall lines. No `count===1` rail bookkeeping to decide which edge is exterior;
   the union already computed the exterior.
@@ -144,10 +151,18 @@ of track around a block).
 threaded in, yielding the floor triangles. Boundary rings, kept separately, are
 the edge/wall polylines.
 
-**Grade grouping.** Partition ribbons into layers `L_g` by baked grade; union
-within each `L_g`; render `L_g` at height `y_g`. Two ribbons overlapping in plan
-but in different `L_g` never union, so a crossing keeps both surfaces and both
-walls.
+**Grade levels.** Give each corridor `c` an integer `level(c) = max(0, max_{c over u}
+level(u) + 1)` — the longest path in the overlap DAG — by relaxing `level[over] ≥
+level[under] + 1` to a fixed point, capped at `MAX_LEVEL`. Render level `k` with a depth
+offset (`polygonOffset ∝ -k`) so higher levels win the depth test; the floors stay flat at
+one height. This is draw-order grade separation: no geometry moves, so no bump/hover/void,
+and any overlapping pair with a grade difference stops z-fighting.
+
+**Overlap relations.** Two kinds of overlap feed the DAG. A **crossing** is a true interior
+intersection of the centerlines. A **near-parallel overlap** is two different-route
+corridors whose centerlines run within `2·halfWidth` (their ribbons overlap) for at least a
+minimum length but never cross — express/local pairs. Both add an `over → under` edge (by
+the busier-on-top priority), so a pair that overlaps without ever crossing still separates.
 
 ## What it replaces
 

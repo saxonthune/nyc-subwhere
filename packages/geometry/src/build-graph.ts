@@ -1,35 +1,32 @@
-// Stage 4: track junctions (doc02.05). Finds where two tracks cross at different
-// grade — a transversal intersection in the *interior* of both segments (a merge, by
-// contrast, meets at a shared endpoint) — then bakes the grade separation as a
-// per-vertex elevation profile: the `over` segment ramps up over the crossing and
-// back down along its own arc length, so the renderer lifts floor and walls together
-// with no tear (doc01.03).
+// Stage 4: track junctions (doc02.07). Finds where two tracks overlap — a true crossing or
+// a sustained near-parallel run — decides which passes over (busier route-set on top), and
+// assigns each segment a *constant* grade level: one above every segment it is over, via a
+// longest-path level over the overlap graph. The renderer draws higher levels in front, so
+// overlapping floors resolve in the depth buffer with no z-fighting and no geometric bump.
 
 import type {
   LngLat,
   SegmentCollection,
   TrackCrossing,
   TrackGraph,
-  TrackMerge,
 } from "@nyc-subwhere/contract";
 import { projectNyc } from "./geo";
 
-// An intersection within this of either segment's endpoint is a merge/branch throat,
-// not a crossing — the two tracks join there rather than pass at different grade.
-const ENDPOINT_EXCLUDE_M = 25;
-// A crossing shallower than this is a near-parallel merge artifact, not a clean
-// cross; skip it so it gets no grade-separation lift.
-const CROSS_MIN_ANGLE_DEG = 20;
-// Grade-separation ramp: the over segment rises this high at the crossing (clears the
-// under wall tops, ~10 m) and eases back to grade over this arc-length each side, as a
-// raised cosine so the profile is C1 (no kink in floor or walls). Meters.
-const CROSS_LIFT_M = 20;
-const CROSS_RAMP_M = 70;
-// Merge lift: the bendy branch rides this high above the straight trunk it joins, so a
-// junction reads as the branch merging on from above. A gentle step (< wallHeight),
-// ramped in over this arc-length back from the join. Meters.
-const MERGE_LIFT_M = 5;
-const MERGE_LIFT_RAMP_M = 45;
+// An intersection within this of either segment's endpoint is a merge/branch throat.
+// Kept small so merges (which the silhouette union tiles) still register a grade step and
+// don't z-fight, while genuine end-to-end joins at stations don't.
+const ENDPOINT_EXCLUDE_M = 12;
+// A crossing shallower than this is treated as a near-parallel artifact and skipped.
+const CROSS_MIN_ANGLE_DEG = 8;
+// Overlap leveling: two corridors whose centerlines run within this of each other (their
+// half-width HALF_WIDTH_M=26 ribbons overlap) for at least OVERLAP_MIN_M of length, but
+// never actually cross, still get a grade step so their floors don't z-fight along the
+// shared run (near-parallel express/local). Meters.
+const OVERLAP_DIST_M = 36;
+const OVERLAP_MIN_M = 40;
+// Cap the grade stack (a deep overlap chain would otherwise pile up into many depth-offset
+// layers); beyond the cap, rare same-level overlaps just z-resolve arbitrarily.
+const MAX_LEVEL = 4;
 
 type Pt = [number, number]; // meters
 
@@ -44,12 +41,8 @@ interface Seg {
   routes: string[];
 }
 
-// merges come from conform-merges (the branch→trunk facts) and are used here to lift the
-// bendy branch above the straight trunk near each join; the caller re-attaches the merge
-// list to the graph it returns.
 export function buildGraph(
   segments: SegmentCollection,
-  merges: TrackMerge[],
 ): Omit<TrackGraph, "merges" | "silhouette"> {
   const segs: Seg[] = segments.features.map((f, i) => {
     const ll = f.geometry.coordinates;
@@ -67,58 +60,55 @@ export function buildGraph(
     return { i, ll, m, minX, minY, maxX, maxY, routes: f.properties.routes };
   });
 
+  // Grade relations (over must sit above under): a true crossing, or a sustained
+  // near-parallel overlap between two different-route corridors that never actually cross.
+  // Both feed the level DAG so any pair whose ribbons overlap gets separated in depth.
   const crossings: TrackCrossing[] = [];
+  const relations: [number, number][] = [];
   for (let a = 0; a < segs.length; a++) {
     for (let b = a + 1; b < segs.length; b++) {
       const sa = segs[a];
       const sb = segs[b];
       if (
-        sa.maxX < sb.minX ||
-        sb.maxX < sa.minX ||
-        sa.maxY < sb.minY ||
-        sb.maxY < sa.minY
+        sa.maxX < sb.minX - OVERLAP_DIST_M ||
+        sb.maxX < sa.minX - OVERLAP_DIST_M ||
+        sa.maxY < sb.minY - OVERLAP_DIST_M ||
+        sb.maxY < sa.minY - OVERLAP_DIST_M
       )
         continue;
       const hit = firstCrossing(sa, sb);
-      if (!hit) continue;
-      const [over, under] = priority(sa, sb);
-      crossings.push({ point: hit, over, under });
+      if (hit) {
+        const [over, under] = priority(sa, sb);
+        crossings.push({ point: hit, over, under });
+        relations.push([over, under]);
+        continue;
+      }
+      if (sameRoutes(sa, sb)) continue;
+      if (overlapLength(sa, sb, OVERLAP_DIST_M) >= OVERLAP_MIN_M) {
+        const [over, under] = priority(sa, sb);
+        relations.push([over, under]);
+      }
     }
   }
 
-  const elevation = segs.map((s) => new Array<number>(s.m.length).fill(0));
-  for (const c of crossings) {
-    liftOverProfile(segs[c.over], projectNyc(c.point), elevation[c.over]);
+  // Longest-path grade level: over must sit above under, so level[over] ≥ level[under] + 1.
+  // Relax to a fixed point (the priority order is total, so the over→under graph is acyclic
+  // and this converges). Height is level·step, held constant along each segment.
+  const level = new Array<number>(segs.length).fill(0);
+  for (let iter = 0; iter < segs.length; iter++) {
+    let changed = false;
+    for (const [over, under] of relations) {
+      if (level[over] < level[under] + 1) {
+        level[over] = level[under] + 1;
+        changed = true;
+      }
+    }
+    if (!changed) break;
   }
-  for (const mg of merges) {
-    liftMergeBranch(
-      segs[mg.branch],
-      projectNyc(mg.attach),
-      elevation[mg.branch],
-    );
-  }
+  const grade = level.map((l) => Math.min(l, MAX_LEVEL));
 
   const partner = pairCorridors(segs, segments);
-  return { crossings, elevation, partner };
-}
-
-// Raise the branch near the end that joins its trunk, ramping from grade up to
-// MERGE_LIFT_M at the join over MERGE_LIFT_RAMP_M (a raised cosine, so floor and walls
-// tilt up smoothly), max-combined with any crossing lift.
-function liftMergeBranch(seg: Seg, attach: Pt, out: number[]): void {
-  const cum = [0];
-  for (let i = 1; i < seg.m.length; i++)
-    cum.push(cum[i - 1] + dist(seg.m[i - 1], seg.m[i]));
-  const total = cum[cum.length - 1];
-  const joinArc =
-    dist(seg.m[seg.m.length - 1], attach) < dist(seg.m[0], attach) ? total : 0;
-  for (let i = 0; i < seg.m.length; i++) {
-    const d = Math.abs(cum[i] - joinArc);
-    if (d >= MERGE_LIFT_RAMP_M) continue;
-    const h =
-      MERGE_LIFT_M * 0.5 * (1 + Math.cos((Math.PI * d) / MERGE_LIFT_RAMP_M));
-    if (h > out[i]) out[i] = h;
-  }
+  return { crossings, grade, partner };
 }
 
 // Pair each segment with its antiparallel other-direction half: same route set,
@@ -159,44 +149,6 @@ function pairCorridors(segs: Seg[], segments: SegmentCollection): number[] {
     }
   }
   return partner;
-}
-
-// Ramp the `over` segment up around a crossing, in the segment's own arc-length domain
-// (not radial distance) so the whole cross-section at each vertex moves as one unit.
-// The crossing's arc position is the nearest point on the polyline; each vertex within
-// CROSS_RAMP_M of it takes a raised-cosine lift, max-combined with any other crossing.
-function liftOverProfile(seg: Seg, point: Pt, out: number[]): void {
-  const cum = [0];
-  for (let i = 1; i < seg.m.length; i++)
-    cum.push(cum[i - 1] + dist(seg.m[i - 1], seg.m[i]));
-
-  let bestD = Number.POSITIVE_INFINITY;
-  let crossArc = 0;
-  for (let i = 0; i < seg.m.length - 1; i++) {
-    const { d, t } = projPointSeg(point, seg.m[i], seg.m[i + 1]);
-    if (d < bestD) {
-      bestD = d;
-      crossArc = cum[i] + t * (cum[i + 1] - cum[i]);
-    }
-  }
-
-  for (let i = 0; i < seg.m.length; i++) {
-    const dd = Math.abs(cum[i] - crossArc);
-    if (dd >= CROSS_RAMP_M) continue;
-    const h =
-      CROSS_LIFT_M * 0.5 * (1 + Math.cos((Math.PI * dd) / CROSS_RAMP_M));
-    if (h > out[i]) out[i] = h;
-  }
-}
-
-// Distance from p to segment a-b and the clamped parameter t of the foot along a-b.
-function projPointSeg(p: Pt, a: Pt, b: Pt): { d: number; t: number } {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const len2 = dx * dx + dy * dy || 1;
-  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
-  t = Math.min(1, Math.max(0, t));
-  return { d: Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy)), t };
 }
 
 // The first transversal interior intersection of two segments: away from every
@@ -270,4 +222,45 @@ function angleBetween(a1: Pt, a2: Pt, b1: Pt, b2: Pt): number {
 
 function dist(a: Pt, b: Pt): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1]);
+}
+
+function sameRoutes(sa: Seg, sb: Seg): boolean {
+  if (sa.routes.length !== sb.routes.length) return false;
+  const a = [...sa.routes].sort();
+  const b = [...sb.routes].sort();
+  return a.every((r, i) => r === b[i]);
+}
+
+// Arc-length of sa that runs within maxDist of sb's polyline — how far the two ribbons
+// overlap side by side. Approximated by summing sa's edges whose midpoint is within range.
+function overlapLength(sa: Seg, sb: Seg, maxDist: number): number {
+  const maxD2 = maxDist * maxDist;
+  let len = 0;
+  for (let i = 0; i < sa.m.length - 1; i++) {
+    const a = sa.m[i];
+    const b = sa.m[i + 1];
+    const mid: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    if (pointPolyD2(mid, sb.m) <= maxD2) len += dist(a, b);
+  }
+  return len;
+}
+
+function pointPolyD2(p: Pt, poly: Pt[]): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < poly.length - 1; i++) {
+    const d = segD2(p, poly[i], poly[i + 1]);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+function segD2(p: Pt, a: Pt, b: Pt): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const l2 = dx * dx + dy * dy || 1;
+  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2;
+  t = Math.min(1, Math.max(0, t));
+  const ex = p[0] - (a[0] + t * dx);
+  const ey = p[1] - (a[1] + t * dy);
+  return ex * ex + ey * ey;
 }

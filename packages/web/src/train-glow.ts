@@ -30,7 +30,13 @@ export interface GlowEffect {
   // Push this frame's trains plus the camera direction (toward the viewer, local
   // frame) so a billboard can face the camera.
   update(trains: GlowTrains, camDir: THREE.Vector3): void;
-  setVisible(visible: boolean): void;
+  // Enable/disable the whole effect — the lighting toggle. For the scene bloom this
+  // gates the pass that lights land/track/stations, so it is independent of trains.
+  setEnabled(enabled: boolean): void;
+  // Hide only the train-specific glow when trains are toggled off. For the scene
+  // bloom this is a no-op: NetworkLayer hides the train mesh from the scene, so the
+  // bloom source already excludes them.
+  setTrainGlowVisible(visible: boolean): void;
   // Wrap the scene render. Mesh strategies just call renderScene(); a post-process
   // strategy renders to targets and composites. renderScene() renders the whole
   // three scene; renderTrains() renders only the train boxes (the bloom source),
@@ -62,7 +68,8 @@ class NoGlow implements GlowEffect {
   onAdd(): void {}
   rebuild(): void {}
   update(): void {}
-  setVisible(): void {}
+  setEnabled(): void {}
+  setTrainGlowVisible(): void {}
   render(renderScene: () => void): void {
     renderScene();
   }
@@ -81,7 +88,12 @@ class SpriteGlow implements GlowEffect {
   private scene?: THREE.Scene;
   private mesh?: THREE.InstancedMesh;
   private readonly texture = makeGlowTexture();
-  private visible = true;
+  private enabled = true;
+  private trainGlowVisible = true;
+
+  private get visible(): boolean {
+    return this.enabled && this.trainGlowVisible;
+  }
 
   constructor(
     private readonly opts: { depthTest: boolean; behindOffsetM: number },
@@ -164,9 +176,14 @@ class SpriteGlow implements GlowEffect {
     mesh.visible = this.visible;
   }
 
-  setVisible(visible: boolean): void {
-    this.visible = visible;
-    if (this.mesh) this.mesh.visible = visible;
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (this.mesh) this.mesh.visible = this.visible;
+  }
+
+  setTrainGlowVisible(visible: boolean): void {
+    this.trainGlowVisible = visible;
+    if (this.mesh) this.mesh.visible = this.visible;
   }
 
   render(renderScene: () => void): void {
@@ -211,9 +228,14 @@ class BloomGlow implements GlowEffect {
   rebuild(): void {}
   update(): void {}
 
-  setVisible(visible: boolean): void {
-    this.visible = visible;
+  setEnabled(enabled: boolean): void {
+    this.visible = enabled;
   }
+
+  // No-op: the bloom source re-renders the scene (or the train layer), so a train
+  // hidden by NetworkLayer is already excluded — toggling trains must not gate the
+  // whole pass, which also lights land/track/stations.
+  setTrainGlowVisible(): void {}
 
   render(renderScene: () => void, renderTrains: () => void): void {
     const renderer = this.renderer;

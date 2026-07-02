@@ -102,19 +102,39 @@ export class Menu extends LitElement {
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
+    /* Narrow screens: "Menu" collapses to a ☰ glyph and the countdown to just "Ns". */
+    .short {
+      display: none;
+    }
+    @media (max-width: 480px) {
+      .full {
+        display: none;
+      }
+      .short {
+        display: inline;
+      }
+      .toggle .short {
+        font-size: 18px;
+        line-height: 1;
+      }
+    }
   `;
 
   private toggle() {
     this.open = !this.open;
   }
 
-  private countdownLabel(): string {
-    if (!this.nextUpdateAt) return "next update: …";
+  // Full and short forms of the countdown; the short one ("12s") is shown on narrow
+  // screens where "next update: 12s" would crowd the bar (see the media query).
+  private countdown(): { full: string; short: string } {
+    if (!this.nextUpdateAt) return { full: "next update: …", short: "…" };
     const secs = Math.ceil((this.nextUpdateAt - Date.now()) / 1000);
-    return secs > 0 ? `next update: ${secs}s` : "updating…";
+    if (secs <= 0) return { full: "updating…", short: "…" };
+    return { full: `next update: ${secs}s`, short: `${secs}s` };
   }
 
   render() {
+    const cd = this.countdown();
     return html`
       ${
         this.open
@@ -126,8 +146,12 @@ export class Menu extends LitElement {
           : nothing
       }
       <div class="bar">
-        <button class="toggle" @click=${this.toggle}>Menu</button>
-        <span class="countdown">${this.countdownLabel()}</span>
+        <button class="toggle" @click=${this.toggle}>
+          <span class="full">Menu</span><span class="short">☰</span>
+        </button>
+        <span class="countdown">
+          <span class="full">${cd.full}</span><span class="short">${cd.short}</span>
+        </span>
       </div>
     `;
   }

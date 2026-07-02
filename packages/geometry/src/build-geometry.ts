@@ -122,7 +122,7 @@ async function main(): Promise<void> {
   const tracks = buildTracks(located, feedVersion);
   const stations = buildStations(canonical, normalized);
   const graph = {
-    ...buildGraph(segments, []),
+    ...buildGraph(segments),
     merges: [],
     silhouette: buildSilhouette(segments),
   };

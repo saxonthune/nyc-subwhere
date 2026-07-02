@@ -24,9 +24,8 @@ type LngLat = [number, number];
 export type BoroughPolygon = LngLat[][];
 
 // Per-station placement in the meter-scaled local frame: offset from `origin`
-// (X east, Z south) plus the track bearing at the station, as a rotation about
-// the vertical axis so the platform box lies parallel to the track.
-type Placement = { x: number; z: number; angleY: number };
+// (X east, Z south). Pucks are radially symmetric, so no bearing is needed.
+type Placement = { x: number; z: number };
 
 // A geometric hit, resolved to the index/id the caller keyed its metadata by
 // (doc01.03). This layer stays free of Trip/Station semantics: main.ts turns a
@@ -38,10 +37,8 @@ export type PickResult =
 
 // A single MapLibre custom layer that renders the whole static network in 3D in
 // one shared Three.js scene (doc02.03): route track drawn by a swappable
-// TrackRenderer (track-render.ts), stations as an instanced "puck" disc above an
-// instanced grey platform box oriented along the track. The puck fades out as the
-// map zooms in, so close in the track reads over the platform boxes with no puck
-// occluding them.
+// TrackRenderer (track-render.ts), stations as an instanced "puck" disc that
+// stays visible at every zoom.
 //
 // All meshes live in a meter-scaled local frame anchored at `origin`. MapLibre
 // hands us a matrix each frame that maps Mercator coordinates → clip space; the
@@ -58,9 +55,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private renderer!: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera = new THREE.Camera();
-  private boxes?: THREE.InstancedMesh;
   private pucks?: THREE.InstancedMesh;
-  private puckMaterial?: THREE.MeshStandardMaterial;
   private waterTexture?: THREE.Texture;
   private trains?: THREE.InstancedMesh;
   private readonly glow: GlowEffect = createGlow();
@@ -75,6 +70,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private trackBuild?: TrackBuild;
   private currentPoses: TrainPose[] = [];
   private trainsVisible = true;
+  private lightingEnabled = true;
   private readonly raycaster = new THREE.Raycaster();
 
   private readonly origin = maplibregl.MercatorCoordinate.fromLngLat(
@@ -96,8 +92,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.segments = segments;
     this.graph = graph;
     this.boroughs = boroughs;
-    const lines = segments.map((s) => s.points);
-    this.placements = stations.map((s) => this.place(s, bearingAt(s, lines)));
+    this.placements = stations.map((s) => this.toLocal(s));
   }
 
   private toLocal(lngLat: LngLat): { x: number; z: number } {
@@ -106,16 +101,6 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       x: (m.x - this.origin.x) / this.meterScale,
       z: (m.y - this.origin.y) / this.meterScale,
     };
-  }
-
-  // Local-frame placement for a station: meter offset from origin + a rotation
-  // about the vertical axis derived from the track bearing. rotationY maps local
-  // +X (the box length axis) to (cosθ, 0, -sinθ); to align it with the local
-  // track direction (east, south=-north), θ = atan2(north, east).
-  private place(lngLat: LngLat, bearing: LngLat | null): Placement {
-    const { x, z } = this.toLocal(lngLat);
-    const angleY = bearing ? Math.atan2(bearing[1], bearing[0]) : 0;
-    return { x, z, angleY };
   }
 
   onAdd(
@@ -138,10 +123,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     });
     for (const obj of this.trackBuild.objects) this.scene.add(obj);
     this.pucks = this.buildPucks();
-    this.boxes = this.buildBoxes();
     this.pucks.userData.kind = "station";
-    this.boxes.userData.kind = "station";
-    this.scene.add(this.pucks, this.boxes);
+    this.scene.add(this.pucks);
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: map.getCanvas(),
@@ -165,8 +148,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   // Raycast the scene at a screen point (doc01.03). The camera's projectionMatrix
   // already folds in the local->clip transform render() composes each frame, so
   // its inverse maps a clip-space near/far pair straight into the mesh's meter
-  // frame — no view matrix to undo. Nearest hit wins; invisible meshes (a puck
-  // faded out at high zoom, a box hidden when zoomed out) are skipped by three.
+  // frame — no view matrix to undo. Nearest hit wins; invisible meshes (e.g. the
+  // trains when toggled off) are skipped by three.
   pick(point: { x: number; y: number }): PickResult | null {
     const canvas = this.map.getCanvas();
     const ndcX = (point.x / canvas.clientWidth) * 2 - 1;
@@ -178,7 +161,6 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
 
     const targets: THREE.Object3D[] = [...(this.trackBuild?.objects ?? [])];
     if (this.pucks) targets.push(this.pucks);
-    if (this.boxes) targets.push(this.boxes);
     if (this.trains) targets.push(this.trains);
 
     for (const hit of this.raycaster.intersectObjects(targets, false)) {
@@ -307,10 +289,9 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       puck.height,
       24,
     );
-    this.puckMaterial = this.lighting.stationMaterial();
     const mesh = new THREE.InstancedMesh(
       geo,
-      this.puckMaterial,
+      this.lighting.stationMaterial(),
       this.placements.length,
     );
     // Seat the puck so its top clears the top of the track (its wall tops).
@@ -324,29 +305,11 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     return mesh;
   }
 
-  private buildBoxes(): THREE.InstancedMesh {
-    const { box } = NETWORK_STYLE;
-    // Local +X = length (along track), Y = depth (down), Z = width (across).
-    const geo = new THREE.BoxGeometry(box.length, box.depth, box.width);
-    const mat = new THREE.MeshStandardMaterial({ color: box.color });
-    const mesh = new THREE.InstancedMesh(geo, mat, this.placements.length);
-    const m = new THREE.Matrix4();
-    this.placements.forEach((p, i) => {
-      // Rotate flat about the vertical axis, then hang below ground: top face at
-      // y=0, extending down by box.depth.
-      m.makeRotationY(p.angleY);
-      m.setPosition(p.x, -box.depth / 2, p.z);
-      mesh.setMatrixAt(i, m);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    return mesh;
-  }
-
   // Replace the live-train instances with the current frame's poses (doc02.04).
   // Called every animation frame by the interpolation loop in main.ts; the mesh
   // is grown lazily as the fleet size climbs. Each train is one elongated box,
   // rotated flat about the vertical axis so its length runs along its travel
-  // bearing (same X=east, Z=south convention as the platform boxes).
+  // bearing (X=east, Z=south local frame).
   setTrains(poses: TrainPose[]) {
     if (!this.trains || poses.length > this.trainCapacity) {
       this.rebuildTrains(Math.max(64, poses.length));
@@ -411,11 +374,20 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   }
 
   // Hide/show live trains without dropping the poll+interpolate loop (doc01.03).
-  // Not persisted: a reload starts with trains shown.
+  // Not persisted: a reload starts with trains shown. Only the train mesh and its
+  // own glow are affected — the scene bloom that lights land/track/stations stays on.
   toggleTrains(): void {
     this.trainsVisible = !this.trainsVisible;
     if (this.trains) this.trains.visible = this.trainsVisible;
-    this.glow.setVisible(this.trainsVisible);
+    this.glow.setTrainGlowVisible(this.trainsVisible);
+  }
+
+  // Enable/disable the scene bloom — the glow that lights the whole network. Off
+  // leaves the flat base render (land, track, stations, trains) with no bloom.
+  // Not persisted: a reload starts with lighting on.
+  toggleLighting(): void {
+    this.lightingEnabled = !this.lightingEnabled;
+    this.glow.setEnabled(this.lightingEnabled);
   }
 
   private rebuildTrains(capacity: number) {
@@ -456,13 +428,6 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private syncZoom = () => {
     const zoom = this.map.getZoom();
     this.trackBuild?.setZoom(zoom, this.metersPerPixel(zoom));
-    if (this.boxes) this.boxes.visible = zoom >= NETWORK_STYLE.box.minZoom;
-
-    const { fadeStartZoom, fadeEndZoom } = NETWORK_STYLE.puck;
-    const t = (zoom - fadeStartZoom) / (fadeEndZoom - fadeStartZoom);
-    const opacity = 1 - Math.min(1, Math.max(0, t));
-    if (this.puckMaterial) this.puckMaterial.opacity = opacity;
-    if (this.pucks) this.pucks.visible = opacity > 0;
   };
 
   // Ground meters per screen pixel at the map center for a zoom (Web Mercator, 512px
@@ -483,32 +448,3 @@ function trainCenterY(): number {
   return puckTop + train.clearance + train.height / 2;
 }
 
-// The unit track direction (east, north components) nearest to a station, found
-// by the closest vertex across all segments and the direction to its neighbor.
-// Stations sit on track vertices, so the nearest vertex is effectively the
-// station's own point on its line. Returns null if no segment has an edge.
-function bearingAt(station: LngLat, lines: LngLat[][]): LngLat | null {
-  let best = Number.POSITIVE_INFINITY;
-  let dir: LngLat | null = null;
-  for (const line of lines) {
-    for (let i = 0; i < line.length; i++) {
-      const d = sqDist(station, line[i]);
-      if (d >= best) continue;
-      const neighbor = line[i + 1] ?? line[i - 1];
-      if (!neighbor) continue;
-      best = d;
-      const cosLat = Math.cos((station[1] * Math.PI) / 180);
-      const east = (neighbor[0] - line[i][0]) * cosLat;
-      const north = neighbor[1] - line[i][1];
-      const len = Math.hypot(east, north) || 1;
-      dir = [east / len, north / len];
-    }
-  }
-  return dir;
-}
-
-function sqDist(a: LngLat, b: LngLat): number {
-  const dx = a[0] - b[0];
-  const dy = a[1] - b[1];
-  return dx * dx + dy * dy;
-}
