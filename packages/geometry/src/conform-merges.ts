@@ -7,7 +7,11 @@
 // canonical geometry: this mutates segments in place before the graph + assets are
 // written, so crossings and picking see the conformed shape too. Meters throughout.
 
-import type { LngLat, SegmentCollection } from "@nyc-subwhere/contract";
+import type {
+  LngLat,
+  SegmentCollection,
+  TrackMerge,
+} from "@nyc-subwhere/contract";
 import { projectNyc, unprojectNyc } from "./geo";
 
 // A branch end within this of a superset trunk's centerline, and heading within
@@ -26,7 +30,10 @@ interface Seg {
   dir: string;
 }
 
-export function conformMerges(segments: SegmentCollection): number {
+export function conformMerges(segments: SegmentCollection): {
+  conformed: number;
+  merges: TrackMerge[];
+} {
   const segs: Seg[] = segments.features.map((f, i) => ({
     i,
     m: f.geometry.coordinates.map(projectNyc),
@@ -34,7 +41,7 @@ export function conformMerges(segments: SegmentCollection): number {
     dir: f.properties.direction,
   }));
 
-  let conformed = 0;
+  const merges: TrackMerge[] = [];
   for (const b of segs) {
     // Reshape either end that lands on a superset trunk. `atEnd` false = the start
     // vertex is the join, so reverse, reshape the tail, and reverse back.
@@ -47,7 +54,7 @@ export function conformMerges(segments: SegmentCollection): number {
       const reshaped = blendTail(poly, t.attach, t.tan);
       if (!reshaped) continue;
       b.m = atEnd ? reshaped : reshaped.reverse();
-      conformed++;
+      merges.push({ branch: b.i, trunk: t.ti, attach: unprojectNyc(t.attach) });
     }
   }
 
@@ -56,7 +63,7 @@ export function conformMerges(segments: SegmentCollection): number {
       unprojectNyc,
     ) as LngLat[];
   }
-  return conformed;
+  return { conformed: merges.length, merges };
 }
 
 // The trunk this branch end joins: a different segment, same direction, whose routes
@@ -67,8 +74,8 @@ function findTrunk(
   joinPt: Pt,
   inTan: Pt,
   segs: Seg[],
-): { attach: Pt; tan: Pt } | null {
-  let best: { attach: Pt; tan: Pt; d: number } | null = null;
+): { attach: Pt; tan: Pt; ti: number } | null {
+  let best: { attach: Pt; tan: Pt; ti: number; d: number } | null = null;
   for (const t of segs) {
     if (t.i === b.i || t.dir !== b.dir) continue;
     if (!strictSuperset(t.routes, b.routes)) continue;
@@ -76,7 +83,8 @@ function findTrunk(
     if (np.d > MERGE_ATTACH_M) continue;
     const tan = orient(np.tan, inTan);
     if (dot(tan, inTan) < Math.cos((MERGE_ANGLE_DEG * Math.PI) / 180)) continue;
-    if (!best || np.d < best.d) best = { attach: np.point, tan, d: np.d };
+    if (!best || np.d < best.d)
+      best = { attach: np.point, tan, ti: t.i, d: np.d };
   }
   return best;
 }

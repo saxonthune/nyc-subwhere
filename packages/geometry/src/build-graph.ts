@@ -10,6 +10,7 @@ import type {
   SegmentCollection,
   TrackCrossing,
   TrackGraph,
+  TrackMerge,
 } from "@nyc-subwhere/contract";
 import { projectNyc } from "./geo";
 
@@ -24,6 +25,11 @@ const CROSS_MIN_ANGLE_DEG = 20;
 // raised cosine so the profile is C1 (no kink in floor or walls). Meters.
 const CROSS_LIFT_M = 20;
 const CROSS_RAMP_M = 70;
+// Merge lift: the bendy branch rides this high above the straight trunk it joins, so a
+// junction reads as the branch merging on from above. A gentle step (< wallHeight),
+// ramped in over this arc-length back from the join. Meters.
+const MERGE_LIFT_M = 5;
+const MERGE_LIFT_RAMP_M = 45;
 
 type Pt = [number, number]; // meters
 
@@ -38,7 +44,13 @@ interface Seg {
   routes: string[];
 }
 
-export function buildGraph(segments: SegmentCollection): TrackGraph {
+// merges come from conform-merges (the branch→trunk facts) and are used here to lift the
+// bendy branch above the straight trunk near each join; the caller re-attaches the merge
+// list to the graph it returns.
+export function buildGraph(
+  segments: SegmentCollection,
+  merges: TrackMerge[],
+): Omit<TrackGraph, "merges"> {
   const segs: Seg[] = segments.features.map((f, i) => {
     const ll = f.geometry.coordinates;
     const m = ll.map(projectNyc);
@@ -78,9 +90,31 @@ export function buildGraph(segments: SegmentCollection): TrackGraph {
   for (const c of crossings) {
     liftOverProfile(segs[c.over], projectNyc(c.point), elevation[c.over]);
   }
+  for (const mg of merges) {
+    liftMergeBranch(segs[mg.branch], projectNyc(mg.attach), elevation[mg.branch]);
+  }
 
   const partner = pairCorridors(segs, segments);
   return { crossings, elevation, partner };
+}
+
+// Raise the branch near the end that joins its trunk, ramping from grade up to
+// MERGE_LIFT_M at the join over MERGE_LIFT_RAMP_M (a raised cosine, so floor and walls
+// tilt up smoothly), max-combined with any crossing lift.
+function liftMergeBranch(seg: Seg, attach: Pt, out: number[]): void {
+  const cum = [0];
+  for (let i = 1; i < seg.m.length; i++)
+    cum.push(cum[i - 1] + dist(seg.m[i - 1], seg.m[i]));
+  const total = cum[cum.length - 1];
+  const joinArc =
+    dist(seg.m[seg.m.length - 1], attach) < dist(seg.m[0], attach) ? total : 0;
+  for (let i = 0; i < seg.m.length; i++) {
+    const d = Math.abs(cum[i] - joinArc);
+    if (d >= MERGE_LIFT_RAMP_M) continue;
+    const h =
+      MERGE_LIFT_M * 0.5 * (1 + Math.cos((Math.PI * d) / MERGE_LIFT_RAMP_M));
+    if (h > out[i]) out[i] = h;
+  }
 }
 
 // Pair each segment with its antiparallel other-direction half: same route set,

@@ -118,10 +118,10 @@ async function main(): Promise<void> {
   } = buildSegments(located, normalized);
   // Reshape branch tails onto the trunks they join before anything downstream reads
   // the geometry, so crossings, elevation, and picking all see the conformed shape.
-  const conformedMerges = conformMerges(segments);
+  const { conformed: conformedMerges, merges } = conformMerges(segments);
   const tracks = buildTracks(located, feedVersion);
   const stations = buildStations(canonical, normalized);
-  const graph = buildGraph(segments);
+  const graph = { ...buildGraph(segments, merges), merges };
 
   // Selected canonical shapes as inspectable LineStrings (routes/direction/
   // colors so `inspect` reads them; shapeId/stops for coverage questions).

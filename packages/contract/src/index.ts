@@ -129,6 +129,15 @@ export interface TrackCrossing {
   under: number; // segment passing beneath
 }
 
+// A branch segment whose conformed end joins a `trunk` (a superset-routes segment) at
+// `attach` on the trunk centerline. The renderer trims the branch floor back to the
+// trunk footprint and fills the wedge with a gore, so the floors tile (no overlap).
+export interface TrackMerge {
+  branch: number;
+  trunk: number;
+  attach: LngLat;
+}
+
 export interface TrackGraph {
   crossings: TrackCrossing[];
   elevation: number[][];
@@ -136,6 +145,7 @@ export interface TrackGraph {
   // same corridor), or -1 if one-directional. The renderer fuses a pair into a single
   // full-width track ribbon so there is no centerline seam. Parallel to features.
   partner: number[];
+  merges: TrackMerge[];
 }
 
 // --- Linear-reference index (motion) ------------------------------------

@@ -12,10 +12,12 @@ export type TrackSegment = { points: LngLat[]; colors: string[] };
 // segments array; `elevation[i]` is the per-vertex vertical offset (meters) for
 // segment i, parallel to its points, ramping the over side of a crossing up and back.
 export type TrackCrossing = { point: LngLat; over: number; under: number };
+export type TrackMerge = { branch: number; trunk: number; attach: LngLat };
 export type TrackGraph = {
   crossings: TrackCrossing[];
   elevation: number[][];
   partner: number[];
+  merges: TrackMerge[];
 };
 
 // What the layer lends a renderer: the meter-frame projection it already owns.
@@ -64,10 +66,13 @@ type P2 = { x: number; z: number };
 // into a single full-width ribbon (the partner segment is skipped), so there is no
 // centerline seam to reason about — the median wall problem simply doesn't exist.
 //   floor  — one full-width caret ribbon (-halfWidth..+halfWidth) on the corridor
-//            centerline, lifted per-vertex by the baked crossing elevation.
-//   walls  — only the two true outer edges; a curb piece is dropped where another
-//            track's floor covers the point just outboard of it (an interior merge
-//            edge). Crossings, at different baked grades, keep their walls.
+//            centerline, lifted per-vertex by the baked crossing elevation. Where a
+//            branch merges into a trunk its floor is trimmed back to the trunk footprint
+//            so the two ribbons tile rather than overlap (the trunk owns the junction).
+//   walls  — the boundary of the assembled floor surface: each floor's outer rails are
+//            welded and a rail used by exactly one floor gets a curb, one shared by two
+//            (a tiled junction, or two coplanar floors) gets none. No thresholds — the
+//            mesh topology decides; crossings, at different grades, never weld.
 // Floors merge into one caret-shader mesh with a face→segment map for picking; walls
 // merge into one unlit grey mesh (not pickable — clicks fall through to the floor).
 export class FlatTrackRenderer implements TrackRenderer {
@@ -92,13 +97,55 @@ export class FlatTrackRenderer implements TrackRenderer {
       const p = graph.partner[si];
       return p < 0 || si < p;
     };
+    const corridorOf = (si: number) => (owns(si) ? si : graph.partner[si]);
+
+    // Junction handling (doc02.05): a branch was conformed to run collinear with the
+    // trunk it joins and rides `mergeLift` above it (baked elevation), so the two ribbons
+    // may overlap without z-fighting. The branch is trimmed only where it lies deep over
+    // the trunk (within `mergeKeepM` of the trunk centerline), so it stays atop the trunk
+    // and covers the throat, but its far-inner tip — which would just be a raised wall
+    // stranded over the trunk center — is dropped. trimHead/trimTail count frames to drop.
+    const { halfWidth } = NETWORK_STYLE.track;
+    const mergeKeepM = halfWidth * 0.35;
+    const trimHead = new Array<number>(segments.length).fill(0);
+    const trimTail = new Array<number>(segments.length).fill(0);
+    for (const m of graph.merges) {
+      const bc = corridorOf(m.branch);
+      const tc = corridorOf(m.trunk);
+      const bb = built[bc];
+      const tb = built[tc];
+      if (!bb || !tb) continue;
+      const a = ctx.toLocal(m.attach);
+      const Bf = bb.frames;
+      const last = Bf.length - 1;
+      const endIsLast =
+        frameDistTo(Bf[last], a.x, a.z) < frameDistTo(Bf[0], a.x, a.z);
+      let count = 0;
+      const step = endIsLast ? -1 : 1;
+      for (let i = endIsLast ? last : 0; i >= 0 && i <= last; i += step) {
+        if (distToCenterline(Bf[i], tb.frames) > mergeKeepM) break;
+        count++;
+      }
+      const drop = Math.max(0, count - 1);
+      if (endIsLast) trimTail[bc] = Math.max(trimTail[bc], drop);
+      else trimHead[bc] = Math.max(trimHead[bc], drop);
+    }
 
     const floors: { geo: THREE.BufferGeometry; seg: number }[] = [];
     const rails: RailEdge[] = [];
     built.forEach((b, si) => {
       if (!b || !owns(si)) return;
-      const along = southOriginArcLength(b.frames);
-      const f = buildFloor(b.frames, along, segments[si].colors, b.lift);
+      let lo = trimHead[si];
+      let hi = b.frames.length - trimTail[si];
+      if (hi - lo < 2) {
+        // Trimming would erase the corridor — keep it whole rather than drop it.
+        lo = 0;
+        hi = b.frames.length;
+      }
+      const frames = b.frames.slice(lo, hi);
+      const lift = b.lift.slice(lo, hi);
+      const along = southOriginArcLength(frames);
+      const f = buildFloor(frames, along, segments[si].colors, lift);
       floors.push({ geo: f.geo, seg: si });
       rails.push(...f.rails);
     });
@@ -302,6 +349,30 @@ type V3 = { x: number; y: number; z: number };
 
 function at(f: Frame, off: number, y: number): V3 {
   return { x: f.cx + f.nx * off, y, z: f.cz + f.nz * off };
+}
+
+function frameDistTo(f: Frame, x: number, z: number): number {
+  return Math.hypot(f.cx - x, f.cz - z);
+}
+
+// Distance from a frame's center to a trunk centerline (its frame centers as a
+// polyline), for testing whether a branch frame lies within the trunk footprint.
+function distToCenterline(f: Frame, trunk: Frame[]): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < trunk.length - 1; i++) {
+    const ax = trunk[i].cx;
+    const az = trunk[i].cz;
+    const dx = trunk[i + 1].cx - ax;
+    const dz = trunk[i + 1].cz - az;
+    const l2 = dx * dx + dz * dz || 1;
+    let t = ((f.cx - ax) * dx + (f.cz - az) * dz) / l2;
+    t = Math.min(1, Math.max(0, t));
+    best = Math.min(
+      best,
+      Math.hypot(f.cx - (ax + t * dx), f.cz - (az + t * dz)),
+    );
+  }
+  return best;
 }
 
 function pushTri(pos: number[], nor: number[], p: V3, q: V3, r: V3) {

@@ -79,6 +79,12 @@ export function indexTracks(index: TrackIndex): Map<string, Track> {
 // Roughly a train length, so the gap reads as "approaching", not "arrived".
 const STATION_HOLD_MARGIN_M = 25;
 
+// Sane band for demonstrated-speed pacing (doc02.06), metres per second. The floor
+// keeps one noisy segment from stalling a moving train into an endless crawl; the
+// ceiling guards against a slingshot from a bad pass-time. NYCT tops out ~24 m/s.
+const MIN_PACE_MPS = 1.5;
+const MAX_PACE_MPS = 35;
+
 export type DropCause = "noTrack" | "noStop";
 export type TripResolution =
   | { ok: true; pose: TrainPose }
@@ -214,6 +220,9 @@ interface Basis {
   toT: number;
   hasNext: boolean;
   stalled: boolean;
+  obsDist: number; // last observed station distance, for demonstrated speed
+  obsT: number; // and its observed departure time
+  vObs: number | null; // smoothed demonstrated speed (m/s), null until one segment seen
 }
 
 // Where the estimate places a train at `nowMs`: glide fromDist -> toDist (the
@@ -317,6 +326,33 @@ export class TripEstimator {
       } else {
         appeared++;
       }
+
+      // Demonstrated speed: when the observed station advanced since we last saw
+      // this Trip, the distance/time between the two observed passes is a real
+      // segment speed. Smooth it lightly and carry it while the Trip sits within a
+      // segment (no fresh pass to update it).
+      let vObs = reconciled ? (prev as Basis).vObs : null;
+      if (reconciled) {
+        const p = prev as Basis;
+        if (seg.fromDist > p.obsDist && seg.fromT > p.obsT) {
+          const v = (seg.fromDist - p.obsDist) / ((seg.fromT - p.obsT) / 1000);
+          vObs = p.vObs != null ? 0.5 * p.vObs + 0.5 * v : v;
+        }
+      }
+
+      // Pace at min(feed speed, demonstrated speed) for the remaining glide to the
+      // cap (doc02.06). A slower speed is a later arrival, so this is `toT =
+      // max(feed ETA, dead-reckon-at-vObs arrival)`: keep the feed's pace by
+      // default, slow down only when the train is visibly running slower than the
+      // feed expects, and never glide faster than the feed. `vObs` is floored/
+      // capped to a sane band so one noisy segment can't stall or slingshot it.
+      let toT = seg.toT;
+      const remaining = seg.cap - fromDist;
+      if (seg.hasNext && remaining > 0 && vObs != null && vObs > 0) {
+        const pace = Math.min(MAX_PACE_MPS, Math.max(MIN_PACE_MPS, vObs));
+        toT = Math.max(toT, nowMs + (remaining / pace) * 1000);
+      }
+
       this.bases.set(trip.tripId, {
         tripId: trip.tripId,
         track: seg.track,
@@ -324,9 +360,12 @@ export class TripEstimator {
         fromDist,
         fromT: nowMs,
         toDist: seg.cap,
-        toT: seg.toT,
+        toT,
         hasNext: seg.hasNext,
         stalled: trip.status === "stalled",
+        obsDist: seg.fromDist,
+        obsT: seg.fromT,
+        vObs,
       });
     }
     for (const id of [...this.bases.keys()]) {
