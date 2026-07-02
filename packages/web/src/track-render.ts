@@ -8,15 +8,11 @@ export type LngLat = [number, number];
 // share it — one entry for a solid trunk, several for a shared one.
 export type TrackSegment = { points: LngLat[]; colors: string[] };
 
-// The junction topology (doc02.05), baked by the geometry pipeline. `seg` fields
-// index into the segments array. A `junction` is a real split/merge whose gap the
-// renderer fills with a gore; a `crossing` is two unconnected segments the renderer
-// grade-separates (`over` drawn above `under`).
-export type EdgeEnd = { seg: number; end: "start" | "end" };
-export type TrackNode =
-  | { kind: "junction"; point: LngLat; ends: EdgeEnd[] }
-  | { kind: "crossing"; point: LngLat; over: number; under: number };
-export type TrackGraph = { nodes: TrackNode[] };
+// The junctions (doc02.05) baked by the geometry pipeline: `over`/`under` index the
+// segments array; `elevation[i]` is the per-vertex vertical offset (meters) for
+// segment i, parallel to its points, ramping the over side of a crossing up and back.
+export type TrackCrossing = { point: LngLat; over: number; under: number };
+export type TrackGraph = { crossings: TrackCrossing[]; elevation: number[][] };
 
 // What the layer lends a renderer: the meter-frame projection it already owns.
 // Keeps the renderer free of MapLibre/origin math.
@@ -24,10 +20,10 @@ export type TrackContext = {
   toLocal(p: LngLat): { x: number; z: number };
 };
 
-// The boundary (doc01.03): how a corridor set plus its junction graph becomes
-// drawable 3D objects, and how a raycast hit reads back to a segment index.
-// NetworkLayer knows only this — swap the implementation to change how track looks
-// (and how junctions are handled) without touching the layer or the rest of the scene.
+// The boundary (doc01.03): how a corridor set plus its crossings becomes drawable 3D
+// objects, and how a raycast hit reads back to a segment index. NetworkLayer knows
+// only this — swap the implementation to change how track and junctions look without
+// touching the layer or the rest of the scene.
 export interface TrackRenderer {
   build(segments: TrackSegment[], graph: TrackGraph, ctx: TrackContext): TrackBuild;
 }
@@ -56,104 +52,71 @@ export function trackTopY(): number {
 type Frame = { cx: number; cz: number; nx: number; nz: number };
 type P2 = { x: number; z: number };
 
-// Tubes → one wide flat track (doc01.03), stitched at junctions (doc02.05). Each
-// corridor's two direction polylines draw as half-ribbons meeting at the centerline,
-// so together they tile one wide colored floor with a grey wall + wing on each outer
-// edge. The floor carries north-pointing caret marks that also delimit color cells.
-// Junction handling is driven by the baked graph, one strategy per node kind:
-//   junction — trim every incident edge back by `trimRadiusM`, then fill the gap
-//              with a flat gore patch, so diverging ribbons meet cleanly and their
-//              walls stop at the mouth instead of colliding.
-//   crossing — raise the priority (`over`) edge over a short bridge span so it
-//              clears the `under` edge's walls; no z-fighting, reads as grade
-//              separation.
-// Floors merge into one shader mesh, grey structure into one standard mesh, and gore
-// patches into one unlit vertex-colored mesh; each keeps a face→segment map.
+// One wide flat track, assembled so junction errors are local, not global (doc02.05):
+//   floor  — each segment's caret half-ribbon, raised on a dome where the segment is
+//            the `over` side of a crossing.
+//   walls  — each segment's own two edge curbs, but a curb piece is SUPPRESSED where
+//            another track lies right beside that edge at the same height. That one
+//            local test does both jobs: at a merge the facing walls of two overlapping
+//            same-grade tracks both vanish (a clean join, no seam); at a crossing the
+//            two sides are at different heights, so the test keeps their walls and
+//            they stay separated. No union, so nothing can be flattened into a plus.
+// Floors merge into one caret-shader mesh with a face→segment map for picking; walls
+// merge into one unlit grey mesh (not pickable — clicks fall through to the floor).
 export class FlatTrackRenderer implements TrackRenderer {
   build(segments: TrackSegment[], graph: TrackGraph, ctx: TrackContext): TrackBuild {
-    type Entry = { geo: THREE.BufferGeometry; seg: number };
-    const floors: Entry[] = [];
-    const greys: Entry[] = [];
-    const patches: Entry[] = [];
+    const { surfaceY } = NETWORK_STYLE.track;
 
-    const { trimRadiusM } = NETWORK_STYLE.track.junction;
-
-    // Which ends to trim (seg,end → junction node), and where the over-edges of
-    // crossings sit (seg → local crossing points), from the graph.
-    const junctions = graph.nodes.filter(
-      (n): n is Extract<TrackNode, { kind: "junction" }> => n.kind === "junction",
-    );
-    const trimOf = new Map<number, { start?: number; end?: number }>();
-    junctions.forEach((node, ji) => {
-      for (const e of node.ends) {
-        const t = trimOf.get(e.seg) ?? {};
-        t[e.end] = ji;
-        trimOf.set(e.seg, t);
-      }
-    });
-    const crossOf = new Map<number, P2[]>();
-    for (const node of graph.nodes) {
-      if (node.kind !== "crossing") continue;
-      const arr = crossOf.get(node.over) ?? [];
-      arr.push(ctx.toLocal(node.point));
-      crossOf.set(node.over, arr);
-    }
-
-    // The trimmed mouth frame of every edge-end at each junction, gathered as the
-    // edges are built so the gore patch can span them.
-    const nodeMouths: Frame[][] = junctions.map(() => []);
-
-    segments.forEach((seg, si) => {
-      const local = dedupeConsecutive(seg.points).map((p) => ctx.toLocal(p));
-      if (local.length < 2) return;
-      const tr = trimOf.get(si);
-      const doStart = tr?.start !== undefined;
-      const doEnd = tr?.end !== undefined;
-      const pts = trimPolyline(local, doStart, doEnd, trimRadiusM);
-      if (pts.length < 2) return;
-      const frames = framesOf(pts);
-      const along = southOriginArcLength(pts);
-      const lift = liftAlong(pts, crossOf.get(si) ?? []);
-      floors.push({ geo: buildFloor(frames, along, seg.colors, lift), seg: si });
-      greys.push({ geo: buildGrey(frames, lift), seg: si });
-      if (doStart) nodeMouths[tr!.start!].push(frames[0]);
-      if (doEnd) nodeMouths[tr!.end!].push(frames[frames.length - 1]);
+    // Each segment's cross-section frames paired with its baked per-vertex lift, both
+    // deduped together so the lift stays aligned to the geometry it raises.
+    const built = segments.map((seg, si) => {
+      const kept = dedupeWithLift(seg.points, graph.elevation[si] ?? []);
+      const local = kept.pts.map((p) => ctx.toLocal(p));
+      return local.length >= 2
+        ? { frames: framesOf(local), lift: kept.lift }
+        : undefined;
     });
 
-    junctions.forEach((node, ji) => {
-      const mouths = nodeMouths[ji];
-      if (mouths.length < 2) return;
-      let widest = -1;
-      let color = "#ffffff";
-      let seg = node.ends[0].seg;
-      for (const e of node.ends) {
-        const cols = segments[e.seg]?.colors ?? [];
-        if (cols.length > widest) {
-          widest = cols.length;
-          color = cols[0] ?? color;
-          seg = e.seg;
-        }
-      }
-      patches.push({ geo: buildPatch(mouths, color), seg });
+    // Floor-coverage field for wall suppression: every segment's floor area sampled
+    // (across its width, at grade), so a wall piece can ask "does another track's floor
+    // lie just beyond me?" — the mark of an interior (merge) edge to drop.
+    const heights = new HeightGrid();
+    built.forEach((b, si) => {
+      if (!b) return;
+      addFloorSamples(b.frames, b.lift, si, heights);
+    });
+
+    const floors: { geo: THREE.BufferGeometry; seg: number }[] = [];
+    const wallPos: number[] = [];
+    const wallNor: number[] = [];
+    built.forEach((b, si) => {
+      if (!b) return;
+      const along = southOriginArcLength(b.frames);
+      floors.push({
+        geo: buildFloor(b.frames, along, segments[si].colors, b.lift),
+        seg: si,
+      });
+      buildWalls(b.frames, b.lift, si, heights, wallPos, wallNor);
     });
 
     const objects: THREE.Object3D[] = [];
     const maps = new Map<THREE.Object3D, FaceMap>();
-    const add = (
-      entries: Entry[],
-      material: THREE.Material,
-    ): void => {
-      const built = mergeEntries(entries, material);
-      if (!built) return;
-      built.mesh.userData.kind = "segment";
-      objects.push(built.mesh);
-      maps.set(built.mesh, built.faceMap);
-    };
 
-    add(greys, greyMaterial());
+    if (wallPos.length > 0) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(wallPos, 3));
+      geo.setAttribute("normal", new THREE.Float32BufferAttribute(wallNor, 3));
+      // No userData.kind: walls are not pickable, so a click falls through to floor.
+      objects.push(new THREE.Mesh(geo, greyMaterial()));
+    }
+
     const caretMat = caretMaterial();
-    add(floors, caretMat);
-    add(patches, patchMaterial());
+    const floorMesh = mergeEntries(floors, caretMat);
+    if (floorMesh) {
+      floorMesh.mesh.userData.kind = "segment";
+      objects.push(floorMesh.mesh);
+      maps.set(floorMesh.mesh, floorMesh.faceMap);
+    }
 
     return {
       objects,
@@ -174,6 +137,79 @@ export class FlatTrackRenderer implements TrackRenderer {
         caretMat.uniforms.uDetail.value = Math.min(1, Math.max(0, t));
       },
     };
+  }
+}
+
+// A uniform grid of centerline samples (segment id + grade), so a wall piece can ask
+// whether another track's ribbon covers a point at roughly its own height. Cell size
+// exceeds the query radius, so a 3×3 cell scan finds every candidate.
+class HeightGrid {
+  private readonly cell = NETWORK_STYLE.track.halfWidth;
+  private readonly map = new Map<string, { x: number; z: number; seg: number; g: number }[]>();
+
+  add(x: number, z: number, seg: number, g: number) {
+    const key = this.key(x, z);
+    const bucket = this.map.get(key);
+    if (bucket) bucket.push({ x, z, seg, g });
+    else this.map.set(key, [{ x, z, seg, g }]);
+  }
+
+  // True if another segment's floor lies within `radius` of (x,z) at a grade within
+  // `gradeEps` — i.e. there is same-height track covering this point just beyond a wall.
+  covered(x: number, z: number, seg: number, g: number): boolean {
+    const { wallSuppressFrac, wallGradeEpsM } = NETWORK_STYLE.track.junction;
+    const radius = this.cell * wallSuppressFrac;
+    const r2 = radius * radius;
+    const gx = Math.floor(x / this.cell);
+    const gz = Math.floor(z / this.cell);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const bucket = this.map.get(`${gx + dx},${gz + dz}`);
+        if (!bucket) continue;
+        for (const s of bucket) {
+          if (s.seg === seg) continue;
+          if (Math.abs(s.g - g) > wallGradeEpsM) continue;
+          const ex = x - s.x;
+          const ez = z - s.z;
+          if (ex * ex + ez * ez < r2) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private key(x: number, z: number): string {
+    return `${Math.floor(x / this.cell)},${Math.floor(z / this.cell)}`;
+  }
+}
+
+// Tile a segment's floor into the height grid: samples along the centerline at
+// ~sampleStepM and across the half-ribbon (center, mid, outer edge), each at its
+// interpolated grade, so a wall's outboard point can test whether another floor covers
+// it. Normals are interpolated (not renormalized) — placement, not exact metric.
+function addFloorSamples(
+  frames: Frame[],
+  lift: number[],
+  seg: number,
+  grid: HeightGrid,
+) {
+  const { halfWidth, surfaceY } = NETWORK_STYLE.track;
+  const step = NETWORK_STYLE.track.junction.sampleStepM;
+  const across = [0, -halfWidth / 2, -halfWidth];
+  for (let i = 0; i < frames.length - 1; i++) {
+    const a = frames[i];
+    const b = frames[i + 1];
+    const len = Math.hypot(b.cx - a.cx, b.cz - a.cz) || 1;
+    const n = Math.max(1, Math.ceil(len / step));
+    for (let k = 0; k <= n; k++) {
+      const t = k / n;
+      const cx = a.cx + (b.cx - a.cx) * t;
+      const cz = a.cz + (b.cz - a.cz) * t;
+      const nx = a.nx + (b.nx - a.nx) * t;
+      const nz = a.nz + (b.nz - a.nz) * t;
+      const g = surfaceY + lift[i] + (lift[i + 1] - lift[i]) * t;
+      for (const off of across) grid.add(cx + nx * off, cz + nz * off, seg, g);
+    }
   }
 }
 
@@ -205,9 +241,9 @@ function mergeEntries(
 
 // One half-ribbon floor: a quad strip on the left of the centerline, from the
 // median (`medianGap` from center) out to the full half-width, at `surfaceY` plus
-// the per-vertex grade-separation lift. Every vertex carries its across-track
-// distance from center (`aU`), its along-track distance from the south end (`aV`),
-// and the segment palette padded to 4 with a color count.
+// the per-vertex crossing-dome lift. Every vertex carries its across-track distance
+// from center (`aU`), its along-track distance from the south end (`aV`), and the
+// segment palette padded to 4 with a color count.
 function buildFloor(
   frames: Frame[],
   along: number[],
@@ -250,97 +286,63 @@ function buildFloor(
   return geo;
 }
 
-// The grey structure for one half-ribbon: a wall standing on the outer edge and a
-// wing flanging out past it, lifted per vertex to match the floor's grade at
-// crossings. No inner (median) wall — the two halves read as one wide track.
-function buildGrey(frames: Frame[], lift: number[]): THREE.BufferGeometry {
-  const { halfWidth, surfaceY, wallHeight, wallThickness, wingWidth, wingY } =
-    NETWORK_STYLE.track;
-  const outer = halfWidth;
-  const wallOuter = outer + wallThickness;
-  const wingOuter = wallOuter + wingWidth;
-  const floorTopY = surfaceY;
-  const wallTopY = surfaceY + wallHeight;
-  const wingTopY = surfaceY + wingY;
-
-  const pos: number[] = [];
-  const nor: number[] = [];
-  // Left side only (negative offsets = outer edge of this half-ribbon).
-  sweep(frames, pos, nor, lift, -outer, floorTopY, -outer, wallTopY); // wall inner face
-  sweep(frames, pos, nor, lift, -outer, wallTopY, -wallOuter, wallTopY); // wall top
-  sweep(frames, pos, nor, lift, -wallOuter, wallTopY, -wallOuter, wingTopY); // wall outer
-  sweep(frames, pos, nor, lift, -wallOuter, wingTopY, -wingOuter, wingTopY); // wing top
-  sweep(frames, pos, nor, lift, -wingOuter, wingTopY, -wingOuter, floorTopY); // wing outer
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
-  return geo;
-}
-
-// A quad strip along the centerline between two profile edges, each edge given by
-// an across-track offset and a height; the per-vertex lift is added to both heights.
-function sweep(
+// The two edge curbs of one half-ribbon (outer edge and the centerline edge). A piece
+// is dropped where another track's floor covers the point just *outboard* of it at the
+// same grade — the mark of an interior (merge) edge — so merges lose their facing walls
+// and only the true outline is walled. The floor lies toward -halfWidth, so "outboard"
+// is more negative for the outer edge and more positive for the median edge.
+function buildWalls(
   frames: Frame[],
+  lift: number[],
+  seg: number,
+  heights: HeightGrid,
   pos: number[],
   nor: number[],
-  lift: number[],
-  aOff: number,
-  aY: number,
-  bOff: number,
-  bY: number,
 ) {
-  for (let i = 0; i < frames.length - 1; i++) {
-    const a0 = at(frames[i], aOff, aY + lift[i]);
-    const a1 = at(frames[i + 1], aOff, aY + lift[i + 1]);
-    const b0 = at(frames[i], bOff, bY + lift[i]);
-    const b1 = at(frames[i + 1], bOff, bY + lift[i + 1]);
-    pushTri(pos, nor, a0, a1, b0);
-    pushTri(pos, nor, b0, a1, b1);
+  const { medianGap, halfWidth, surfaceY } = NETWORK_STYLE.track;
+  const eps = NETWORK_STYLE.track.junction.wallOutboardM;
+  for (const offset of [-medianGap, -halfWidth]) {
+    const probe = offset <= -halfWidth ? offset - eps : offset + eps;
+    for (let i = 0; i < frames.length - 1; i++) {
+      const a = at(frames[i], probe, 0);
+      const b = at(frames[i + 1], probe, 0);
+      const g = surfaceY + (lift[i] + lift[i + 1]) / 2;
+      if (heights.covered((a.x + b.x) / 2, (a.z + b.z) / 2, seg, g)) continue;
+      curbPiece(frames[i], frames[i + 1], offset, lift[i], lift[i + 1], pos, nor);
+    }
   }
 }
 
-// A flat gore patch filling a junction: a fan over the ring of trimmed edge mouths,
-// each mouth contributing its two full-width corners. Fanning from the corners'
-// centroid fills the star-shaped gap the trims opened. Solid color (the busiest
-// incident edge's) since it is a small connector, not a stretch of track.
-function buildPatch(mouths: Frame[], color: string): THREE.BufferGeometry {
-  const { halfWidth, surfaceY } = NETWORK_STYLE.track;
-  const corners: P2[] = [];
-  for (const f of mouths) {
-    corners.push({ x: f.cx - f.nx * halfWidth, z: f.cz - f.nz * halfWidth });
-    corners.push({ x: f.cx + f.nx * halfWidth, z: f.cz + f.nz * halfWidth });
-  }
-  let cx = 0;
-  let cz = 0;
-  for (const p of corners) {
-    cx += p.x;
-    cz += p.z;
-  }
-  cx /= corners.length;
-  cz /= corners.length;
-  corners.sort(
-    (a, b) => Math.atan2(a.z - cz, a.x - cx) - Math.atan2(b.z - cz, b.x - cx),
-  );
-
-  const rgb = hexToRgb(color);
-  const pos: number[] = [];
-  const col: number[] = [];
-  const pushV = (x: number, z: number) => {
-    pos.push(x, surfaceY, z);
-    col.push(rgb[0], rgb[1], rgb[2]);
-  };
-  for (let k = 0; k < corners.length; k++) {
-    const a = corners[k];
-    const b = corners[(k + 1) % corners.length];
-    pushV(cx, cz);
-    pushV(a.x, a.z);
-    pushV(b.x, b.z);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-  return geo;
+// One straddling curb quad-strip between two frames at a given across-track offset:
+// inner face, outer face, and a top cap, from the floor top to the wall top plus the
+// per-end dome lift.
+function curbPiece(
+  fa: Frame,
+  fb: Frame,
+  offset: number,
+  la: number,
+  lb: number,
+  pos: number[],
+  nor: number[],
+) {
+  const { surfaceY, wallHeight, wallThickness } = NETWORK_STYLE.track;
+  const t = wallThickness / 2;
+  const floorTop = surfaceY;
+  const wallTop = surfaceY + wallHeight;
+  const aInF = at(fa, offset - t, floorTop + la);
+  const aInT = at(fa, offset - t, wallTop + la);
+  const aOutF = at(fa, offset + t, floorTop + la);
+  const aOutT = at(fa, offset + t, wallTop + la);
+  const bInF = at(fb, offset - t, floorTop + lb);
+  const bInT = at(fb, offset - t, wallTop + lb);
+  const bOutF = at(fb, offset + t, floorTop + lb);
+  const bOutT = at(fb, offset + t, wallTop + lb);
+  pushTri(pos, nor, aInF, bInF, aInT);
+  pushTri(pos, nor, aInT, bInF, bInT);
+  pushTri(pos, nor, aOutF, aOutT, bOutF);
+  pushTri(pos, nor, bOutF, aOutT, bOutT);
+  pushTri(pos, nor, aInT, bInT, aOutT);
+  pushTri(pos, nor, aOutT, bInT, bOutT);
 }
 
 type V3 = { x: number; y: number; z: number };
@@ -392,13 +394,6 @@ function attachPalette(geo: THREE.BufferGeometry, colors: string[]) {
 function greyMaterial(): THREE.Material {
   return new THREE.MeshStandardMaterial({
     color: NETWORK_STYLE.track.greyColor,
-    side: THREE.DoubleSide,
-  });
-}
-
-function patchMaterial(): THREE.Material {
-  return new THREE.MeshBasicMaterial({
-    vertexColors: true,
     side: THREE.DoubleSide,
   });
 }
@@ -497,92 +492,6 @@ function segmentOfFace(map: FaceMap, faceIndex: number): number | null {
   return ans >= 0 ? segIds[ans] : null;
 }
 
-// Trim a polyline back from one or both ends by `radius` meters, so a junction gore
-// can fill the opened gap and walls stop short of the node. Each side is clamped to
-// 40% of the total length so a short segment never collapses.
-function trimPolyline(
-  pts: P2[],
-  trimStart: boolean,
-  trimEnd: boolean,
-  radius: number,
-): P2[] {
-  if (!trimStart && !trimEnd) return pts;
-  let total = 0;
-  for (let i = 0; i < pts.length - 1; i++) total += dist2(pts[i], pts[i + 1]);
-  const cap = total * 0.4;
-  let out = pts;
-  if (trimStart) out = cutFromStart(out, Math.min(radius, cap));
-  if (trimEnd) {
-    out = cutFromStart([...out].reverse(), Math.min(radius, cap)).reverse();
-  }
-  return out.length >= 2 ? out : pts;
-}
-
-function cutFromStart(pts: P2[], r: number): P2[] {
-  let acc = 0;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const d = dist2(pts[i], pts[i + 1]);
-    if (acc + d >= r) {
-      const t = (r - acc) / d;
-      const cut = {
-        x: pts[i].x + t * (pts[i + 1].x - pts[i].x),
-        z: pts[i].z + t * (pts[i + 1].z - pts[i].z),
-      };
-      return [cut, ...pts.slice(i + 1)];
-    }
-    acc += d;
-  }
-  return pts;
-}
-
-// Per-vertex grade-separation lift: a raised-cosine bridge of height `crossLiftM`
-// and along-track length `bridgeLenM` centered on each crossing where this edge is
-// the priority (`over`) side, so it clears the other edge's walls. Overlapping
-// bridges take the max, not the sum, so the crest never doubles.
-function liftAlong(pts: P2[], crosses: P2[]): number[] {
-  const n = pts.length;
-  if (crosses.length === 0) return new Array(n).fill(0);
-  const { crossLiftM, bridgeLenM } = NETWORK_STYLE.track.junction;
-  const arc = [0];
-  for (let i = 1; i < n; i++) arc.push(arc[i - 1] + dist2(pts[i - 1], pts[i]));
-  const centers = crosses.map((c) => nearestArc(pts, arc, c));
-  const half = bridgeLenM / 2;
-  const lift = new Array(n).fill(0);
-  for (let i = 0; i < n; i++) {
-    let l = 0;
-    for (const s of centers) {
-      const x = arc[i] - s;
-      if (Math.abs(x) < half) {
-        l = Math.max(l, crossLiftM * 0.5 * (1 + Math.cos((Math.PI * x) / half)));
-      }
-    }
-    lift[i] = l;
-  }
-  return lift;
-}
-
-function nearestArc(pts: P2[], arc: number[], c: P2): number {
-  let best = Infinity;
-  let bestS = 0;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const ax = pts[i].x;
-    const az = pts[i].z;
-    const dx = pts[i + 1].x - ax;
-    const dz = pts[i + 1].z - az;
-    const len2 = dx * dx + dz * dz || 1;
-    let t = ((c.x - ax) * dx + (c.z - az) * dz) / len2;
-    t = Math.min(1, Math.max(0, t));
-    const px = ax + t * dx;
-    const pz = az + t * dz;
-    const d = Math.hypot(c.x - px, c.z - pz);
-    if (d < best) {
-      best = d;
-      bestS = arc[i] + t * Math.sqrt(len2);
-    }
-  }
-  return bestS;
-}
-
 // Per-vertex frames along a polyline: center plus the unit right-hand normal of the
 // central-difference tangent, so a profile point is center + normal·offset.
 function framesOf(pts: P2[]): Frame[] {
@@ -599,31 +508,42 @@ function framesOf(pts: P2[]): Frame[] {
   return out;
 }
 
-// Along-track distance for each vertex, measured from the corridor's south end
-// (local +z is south, so the vertex with the largest z). Both direction polylines
+// Along-track distance for each frame, measured from the corridor's south end
+// (local +z is south, so the frame with the largest z). Both direction polylines
 // of a corridor thus share one along-track field, keeping their caret marks in
 // phase and pointing the same way (north) where they meet at the centerline.
-function southOriginArcLength(pts: P2[]): number[] {
+function southOriginArcLength(frames: Frame[]): number[] {
   const cum: number[] = [0];
-  for (let i = 1; i < pts.length; i++) {
-    cum.push(cum[i - 1] + dist2(pts[i - 1], pts[i]));
+  for (let i = 1; i < frames.length; i++) {
+    cum.push(
+      cum[i - 1] +
+        Math.hypot(
+          frames[i].cx - frames[i - 1].cx,
+          frames[i].cz - frames[i - 1].cz,
+        ),
+    );
   }
-  const startIsSouth = pts[0].z >= pts[pts.length - 1].z;
+  const startIsSouth = frames[0].cz >= frames[frames.length - 1].cz;
   const total = cum[cum.length - 1];
   return startIsSouth ? cum : cum.map((c) => total - c);
 }
 
-function dist2(a: P2, b: P2): number {
-  return Math.hypot(a.x - b.x, a.z - b.z);
-}
-
-function dedupeConsecutive(points: LngLat[]): LngLat[] {
-  const out: LngLat[] = [];
-  for (const p of points) {
-    const last = out[out.length - 1];
-    if (!last || last[0] !== p[0] || last[1] !== p[1]) out.push(p);
+// Drop consecutive duplicate points, carrying each kept point's baked lift so the
+// elevation profile stays index-aligned to the geometry after deduping.
+function dedupeWithLift(
+  points: LngLat[],
+  elev: number[],
+): { pts: LngLat[]; lift: number[] } {
+  const pts: LngLat[] = [];
+  const lift: number[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const last = pts[pts.length - 1];
+    if (last && last[0] === p[0] && last[1] === p[1]) continue;
+    pts.push(p);
+    lift.push(elev[i] ?? 0);
   }
-  return out;
+  return { pts, lift };
 }
 
 // Parse "#rrggbb" straight to sRGB 0..1 floats. The caret shader writes gl_FragColor

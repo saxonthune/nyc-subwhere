@@ -34,6 +34,15 @@ inspect *ARGS:
 tube-check:
     node packages/web/scripts/tube-check.mjs
 
+# Screenshot the running dev server at a camera pose (paste the `shot:` line from
+# Advanced Stats): just shot <out.png> <lng> <lat> [zoom] [pitch] [bearing]
+shot *ARGS:
+    node packages/web/scripts/shot-at.mjs {{ARGS}}
+
+# Inspect what the baked graph believes at a junction: --station <name> | --at <lng> <lat> [radiusM]
+inspect-junction *ARGS:
+    pnpm --filter @nyc-subwhere/geometry exec tsx src/inspect-junction.ts {{ARGS}}
+
 # Probe a live NYCT realtime feed: currentStatus split, dwell, field coverage (default gtfs; `all` for every feed)
 feed-probe *ARGS:
     node packages/worker/scripts/feed-probe.mjs {{ARGS}}

@@ -1,13 +1,26 @@
 import { LitElement, css, html, nothing } from "lit";
 
-// The inspector shows the raw contract data that drove what was clicked
-// (doc01.03) — the source object(s) and their ids, not a friendly summary — so a
-// developer can see exactly the data subset used to render that geometry. main.ts
-// assembles `data` from the baked props + live snapshot; the panel just dumps it.
+// The inspector shows what drove the geometry that was clicked (doc01.03).
+// Stations and segments dump their raw baked props (`data`) for a developer;
+// a train gets a rider-facing `train` view — resolved names and localized times —
+// assembled by main.ts from the live snapshot.
 export interface InspectorTarget {
   kind: "segment" | "station" | "train";
   title: string;
-  data: unknown;
+  data?: unknown;
+  train?: TrainView;
+}
+
+// A clicked train, resolved for display: route + heading, the last stop it was
+// known at, and the stops ahead. Times are already localized strings and stopIds
+// already resolved to station names by main.ts — the panel only lays them out.
+export interface TrainView {
+  routeId: string;
+  color: string; // "#RRGGBB", the route color
+  heading: string; // "Northbound" | "Southbound"
+  uncertain: boolean;
+  lastStop: { name: string; time: string };
+  next: { name: string; time: string }[];
 }
 
 // Modal inspector docked to the lower screen (doc01.03). A reactive `target`:
@@ -74,6 +87,67 @@ export class InspectorPanel extends LitElement {
       white-space: pre;
       color: #d6d6d6;
     }
+    .train {
+      padding: 12px;
+    }
+    .route {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .bullet {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      color: #fff;
+      font-weight: 700;
+      font-size: 16px;
+    }
+    .heading {
+      color: #b9b9b9;
+    }
+    .uncertain {
+      margin-left: auto;
+      font-size: 11px;
+      color: #ffcf4d;
+      border: 1px solid rgba(255, 207, 77, 0.5);
+      border-radius: 4px;
+      padding: 1px 6px;
+    }
+    .stops {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .stop {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 5px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    .stop.last .name {
+      color: #9a9a9a;
+    }
+    .name {
+      font-weight: 500;
+    }
+    .role {
+      font-size: 11px;
+      color: #7d7d7d;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .time {
+      font-variant-numeric: tabular-nums;
+      color: #cfcfcf;
+      white-space: nowrap;
+    }
   `;
 
   private close() {
@@ -91,7 +165,47 @@ export class InspectorPanel extends LitElement {
             ×
           </button>
         </header>
-        <pre class="body">${JSON.stringify(t.data, null, 2)}</pre>
+        ${
+          t.train
+            ? this.renderTrain(t.train)
+            : html`<pre class="body">${JSON.stringify(t.data, null, 2)}</pre>`
+        }
+      </div>
+    `;
+  }
+
+  private renderTrain(v: TrainView) {
+    return html`
+      <div class="train">
+        <div class="route">
+          <span class="bullet" style="background:${v.color}">${v.routeId}</span>
+          <span class="heading">${v.heading}</span>
+          ${
+            v.uncertain
+              ? html`<span class="uncertain">position uncertain</span>`
+              : nothing
+          }
+        </div>
+        <ul class="stops">
+          <li class="stop last">
+            <span>
+              <span class="name">${v.lastStop.name}</span>
+              <span class="role"> · departed</span>
+            </span>
+            <span class="time">${v.lastStop.time}</span>
+          </li>
+          ${v.next.map(
+            (s, i) => html`
+              <li class="stop">
+                <span>
+                  <span class="name">${s.name}</span>
+                  ${i === 0 ? html`<span class="role"> · next</span>` : nothing}
+                </span>
+                <span class="time">${s.time}</span>
+              </li>
+            `,
+          )}
+        </ul>
       </div>
     `;
   }

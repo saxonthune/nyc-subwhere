@@ -34,7 +34,7 @@ Orphaned attachments (non-md files with no corresponding root .md) are reported 
 | doc01.00 | `00-index.md` |  |  | — | — | — |
 | doc01.01 | `01-glossary.md` | Load-bearing domain vocabulary — GTFS-anchored terms, the project's own coined terms, and the ambiguities to watch | product, glossary, vocabulary, gtfs | doc01.02 | doc01.02, doc01.03, doc02.01, doc02.02, doc02.03, doc02.05 | — |
 | doc01.02 | `02-development-ethos.md` | How this project is built with an agent — lessons carried from the FIFA-bracketing DA-RESULTS retrospective | product, process, ethos, naming, human-agent | doc01.01 | doc01.01 | — |
-| doc01.03 | `03-behaviors.md` | EARS behavioral intent for the Board — render live trips, glide between polls, ride track by stops (off-route reroutes), blink when position is uncertain, reveal directional tracks on zoom, give every route on shared track representation, render the network with depth (raised track, pucks, platform boxes), seat it on grey extruded borough land over a dark-navy water disc that fades into the backdrop, tap to inspect | product, behaviors, ears, rendering, interaction | doc01.01, doc02.01, doc02.03, doc02.05 | — | — |
+| doc01.03 | `03-behaviors.md` | EARS behavioral intent for the Board — render live trips, glide between polls, never render a train at or past a Station it has not been observed to reach (segment-ahead error is fine, station-crossing is not), ride track by stops (off-route reroutes), blink when position is uncertain, reveal directional tracks on zoom, give every route on shared track representation, render the network with depth (raised track, pucks, platform boxes), seat it on grey extruded borough land over a dark-navy water disc that fades into the backdrop, tap to inspect | product, behaviors, ears, rendering, interaction | doc01.01, doc02.01, doc02.03, doc02.05 | — | — |
 
 ## 02-architecture — Architecture
 
@@ -42,11 +42,12 @@ Orphaned attachments (non-md files with no corresponding root .md) are reported 
 |-----|------|---------|------|------|------|-------------|
 
 | doc02.00 | `00-index.md` |  |  | — | — | — |
-| doc02.01 | `01-overview.md` | The runtime model — pull-snapshot the feed, interpolate between keyframes; backend fetch loop and the (open) front-end | architecture, overview, realtime, fetch-loop, interpolation | doc02.02, doc01.01 | doc01.03, doc02.03, doc02.04 | — |
-| doc02.02 | `02-mta-resources.md` | Where subway data comes from, its contract and shape, and how a realtime Trip joins static geometry | architecture, mta, gtfs, data-source | doc01.01 | doc02.01, doc02.04, doc02.05 | — |
+| doc02.01 | `01-overview.md` | The runtime model — pull-snapshot the feed, interpolate between keyframes; backend fetch loop and the (open) front-end | architecture, overview, realtime, fetch-loop, interpolation | doc02.02, doc01.01 | doc01.03, doc02.03, doc02.04, doc02.06 | — |
+| doc02.02 | `02-mta-resources.md` | Where subway data comes from, its contract and shape, and how a realtime Trip joins static geometry | architecture, mta, gtfs, data-source | doc01.01 | doc02.01, doc02.04, doc02.05, doc02.06 | — |
 | doc02.03 | `03-frontend.md` | The frontend stack — MapLibre + Three.js rendering, built with Vite + TypeScript + Biome, no UI framework | architecture, frontend, rendering, maplibre, threejs, vite, typescript | doc01.01, doc02.01 | doc01.03, doc02.05 | — |
 | doc02.04 | `04-backend.md` | Cloudflare Worker as a read-through edge cache in front of the MTA feeds — fan-in, alert-key custody, insulation, and reshape-once | architecture, backend, cloudflare, worker, cache, fetch-loop | doc02.02, doc02.01 | — | — |
 | doc02.05 | `05-geometry-builder.md` | The build-time script that transduces MTA static GTFS into baked web assets — station points, segmented route geometry, and a station→track index — and owns the hard cartography so runtime doesn't | architecture, geometry, build-time, gtfs, script, dev-tooling | doc02.02, doc02.03, doc01.01 | doc01.03 | — |
+| doc02.06 | `06-position-estimation.md` | How accurately a train's position can be recovered from the realtime feed — the one hard fact per poll, the observed events diffing manufactures, the interpolation formula, where delays make position unknowable, and how to fold each new frame into the position already shown (forward-only reconciliation) instead of recomputing it and snapping the train backward | architecture, realtime, interpolation, motion, position, prediction, dead-reckoning, research | doc02.02, doc02.01 | — | — |
 
 ## Tag Index
 
@@ -54,7 +55,7 @@ Quick lookup for file-path→doc mapping:
 
 | Tag | Relevant Docs |
 |-----|---------------|
-| `architecture` | doc02.01, doc02.02, doc02.03, doc02.04, doc02.05 |
+| `architecture` | doc02.01, doc02.02, doc02.03, doc02.04, doc02.05, doc02.06 |
 | `backend` | doc02.04 |
 | `behaviors` | doc01.03 |
 | `build-time` | doc02.05 |
@@ -62,6 +63,7 @@ Quick lookup for file-path→doc mapping:
 | `cloudflare` | doc02.04 |
 | `conventions` | doc00.03 |
 | `data-source` | doc02.02 |
+| `dead-reckoning` | doc02.06 |
 | `dev-tooling` | doc02.05 |
 | `docs` | doc00.01, doc00.02, doc00.03 |
 | `ears` | doc01.03 |
@@ -73,19 +75,23 @@ Quick lookup for file-path→doc mapping:
 | `gtfs` | doc01.01, doc02.02, doc02.05 |
 | `human-agent` | doc01.02 |
 | `interaction` | doc01.03 |
-| `interpolation` | doc02.01 |
+| `interpolation` | doc02.01, doc02.06 |
 | `maintenance` | doc00.02 |
 | `maplibre` | doc02.03 |
 | `meta` | doc00.01 |
+| `motion` | doc02.06 |
 | `mta` | doc02.02 |
 | `naming` | doc01.02 |
 | `overview` | doc02.01 |
 | `philosophy` | doc00.02 |
+| `position` | doc02.06 |
+| `prediction` | doc02.06 |
 | `process` | doc01.02 |
 | `product` | doc01.01, doc01.02, doc01.03 |
-| `realtime` | doc02.01 |
+| `realtime` | doc02.01, doc02.06 |
 | `relational-facts` | doc00.02 |
 | `rendering` | doc01.03, doc02.03 |
+| `research` | doc02.06 |
 | `script` | doc02.05 |
 | `theory` | doc00.01 |
 | `threejs` | doc02.03 |

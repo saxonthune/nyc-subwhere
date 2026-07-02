@@ -68,31 +68,55 @@ console.log(
   `  excl |err|>${OUTLIER_M}m:  p50=${r1(pct(clean, 0.5))} p95=${r1(pct(clean, 0.95))} max=${r1(pct(clean, 1))}  (n=${clean.length})`,
 );
 console.log(
-  `  signed bias:      ${r1(meanSigned)} m  (${meanSigned < 0 ? "trains land BEHIND prediction" : "trains land AHEAD of prediction"})`,
+  `  signed bias:      ${r1(meanSigned)} m  (${meanSigned < 0 ? "rendered AHEAD of fresh obs — over-glides" : "rendered BEHIND fresh obs"})`,
 );
 console.log(
   `  outliers >${OUTLIER_M}m:   ${outliers.length} (${r1((100 * outliers.length) / all.length)}%) — turnarounds/reassignments`,
 );
 
-// Worst routes, pooled.
+// Position-Honesty violations (doc01.03): trains the prior frame rendered PAST a
+// Station the fresh frame shows they had not reached. This is the metric a fix
+// must drive to zero — the signed bias above is the "how far ahead", this is the
+// "how often we crossed a platform we shouldn't have".
+// Exclude the turnaround/reassignment outliers: a trip snapping a full track
+// length trivially crosses every Station and would swamp the honest signal.
+const overshot = all.filter(
+  (t) => t.overshotStations != null && Math.abs(t.err) < OUTLIER_M,
+);
+if (overshot.length) {
+  const violations = overshot.filter((t) => t.overshotStations > 0);
+  const stations = overshot.reduce((a, t) => a + t.overshotStations, 0);
+  const worst = Math.max(...overshot.map((t) => t.overshotStations));
+  console.log(
+    `  station overshoot: ${violations.length}/${overshot.length} trains (${r1((100 * violations.length) / overshot.length)}%) crossed an unreached Station — ${stations} false passages, worst ${worst} stations in one poll`,
+  );
+} else {
+  console.log(
+    "  station overshoot: (not in these records — recapture to populate)",
+  );
+}
+
+// Worst routes, pooled. `signed` (mean err) shows the DIRECTION each line errs:
+// negative = rendered ahead of the fresh observation (the honesty-risky way).
 const byRoute = new Map();
 for (const t of all) {
   if (Math.abs(t.err) >= OUTLIER_M) continue;
   const g = byRoute.get(t.routeId) ?? [];
-  g.push(Math.abs(t.err));
+  g.push(t.err);
   byRoute.set(t.routeId, g);
 }
 const ranked = [...byRoute.entries()]
   .map(([route, v]) => [
     route,
+    v.reduce((a, b) => a + Math.abs(b), 0) / v.length,
     v.reduce((a, b) => a + b, 0) / v.length,
     v.length,
   ])
   .sort((a, b) => b[1] - a[1])
   .slice(0, 8);
-console.log("\nworst routes (mean |err| m, excl outliers):");
-for (const [route, mean, n] of ranked) {
+console.log("\nworst routes (mean |err| m / signed, excl outliers):");
+for (const [route, mean, signed, n] of ranked) {
   console.log(
-    `  ${route.padEnd(3)} ${r1(mean).toString().padStart(6)}  n=${n}`,
+    `  ${route.padEnd(3)} ${r1(mean).toString().padStart(6)}  signed ${r1(signed).toString().padStart(7)}  n=${n}`,
   );
 }

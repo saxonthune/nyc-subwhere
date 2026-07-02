@@ -22,7 +22,7 @@ import {
 } from "./network-layer";
 import { predictionErrors } from "./prediction-error";
 import { StatsPanel } from "./stats-panel";
-import { type TrainPose, indexTracks, resolveTrip } from "./trains";
+import { TripEstimator, indexTracks, resolveTrip } from "./trains";
 
 const container = document.getElementById("map");
 
@@ -51,6 +51,10 @@ const map = new maplibregl.Map({
 });
 
 map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+// Debug hook (doc02.05): expose the map so the junction screenshot harness can
+// jumpTo a named location deterministically. Harmless in production.
+(window as unknown as { __map?: maplibregl.Map }).__map = map;
 
 // Static network geometry (doc02.05): route tubes + station pucks/boxes, all
 // rendered in the Three.js custom layer (doc02.03). No flat MapLibre line/circle
@@ -89,10 +93,26 @@ map.on("load", async () => {
   const boroughs = boroughsGeo.features.map((f) => f.geometry.coordinates);
   const networkLayer = new NetworkLayer(lngLats, segments, graph, boroughs);
   map.addLayer(networkLayer);
+  // Screenshot harness readiness (doc02.05): the empty style is `loaded()` well
+  // before this async handler builds the layer, so the harness gates on this flag
+  // instead — set only once the track geometry is actually in the scene.
+  (window as unknown as { __networkReady?: boolean }).__networkReady = true;
 
   // Bottom-left Menu drives the optional panels (doc01.03): a train visibility
   // toggle and the Advanced Stats panel.
   const statsPanel = new StatsPanel();
+  const syncCamera = () => {
+    if (!statsPanel.open) return;
+    const c = map.getCenter();
+    statsPanel.camera = {
+      lng: c.lng,
+      lat: c.lat,
+      zoom: map.getZoom(),
+      pitch: map.getPitch(),
+      bearing: map.getBearing(),
+    };
+  };
+  map.on("move", syncCamera);
   const menu = new Menu();
   menu.options = [
     { label: "Toggle trains", onSelect: () => networkLayer.toggleTrains() },
@@ -100,6 +120,7 @@ map.on("load", async () => {
       label: "Advanced stats",
       onSelect: () => {
         statsPanel.open = !statsPanel.open;
+        syncCamera();
       },
     },
   ];
@@ -113,12 +134,28 @@ map.on("load", async () => {
   const stationProps = stationsGeo.features.map((f) => f.properties);
   const segmentProps = segmentsGeo.features.map((f) => f.properties);
 
-  // Live trains (doc02.04): poll the worker's render frame every ~30s, then each
-  // animation frame interpolate every Trip's Position Estimate along its baked
-  // Track by wall-clock time and hand the poses to the layer. clockSkew re-bases
-  // the local clock onto the worker's `asOf` so interpolation uses one timeline.
+  // Directional stop_id ("127N") -> station name, for the train inspector. Each
+  // station carries its parent id and its platform ids; also index the parent so
+  // a bare id (or one whose suffix we strip) still resolves.
+  const stopName = new Map<string, string>();
+  for (const p of stationProps) {
+    stopName.set(p.stopId, p.name);
+    for (const platform of p.platforms ?? []) stopName.set(platform, p.name);
+  }
+  const nameOfStop = (stopId: string) =>
+    stopName.get(stopId) ?? stopName.get(stopId.slice(0, -1)) ?? stopId;
+  const fmtTime = (ms: number) =>
+    new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  // Live trains (doc02.04): poll the worker's render frame every ~30s and fold it
+  // into the TripEstimator, then each animation frame read every Trip's position
+  // off the estimator and hand the poses to the layer. The estimator re-bases each
+  // frame onto the position already shown (doc02.06), so ETA jitter can no longer
+  // snap a train backward. clockSkew re-bases the local clock onto the worker's
+  // `asOf` so the estimate and the feed's times share one timeline.
   const trackIndex = (await (await fetch(trackIndexUrl)).json()) as TrackIndex;
   const tracks = indexTracks(trackIndex);
+  const estimator = new TripEstimator();
 
   let snapshot: RenderSnapshot | null = null;
   let clockSkew = 0;
@@ -154,10 +191,24 @@ map.on("load", async () => {
     const trip = snapshot?.trips.find((t) => t.tripId === r.tripId);
     if (!trip) return null;
     const res = resolveTrip(trip, tracks, Date.now() + clockSkew);
+    const pose = res.ok ? res.pose : null;
     return {
       kind: "train",
-      title: `${trip.routeId} train · ${trip.tripId}`,
-      data: { trip, pose: res.ok ? res.pose : null },
+      title: `${trip.routeId} train`,
+      train: {
+        routeId: trip.routeId,
+        color: pose?.color ?? "#9a9a9a",
+        heading: trip.direction === "S" ? "Southbound" : "Northbound",
+        uncertain: pose?.uncertain ?? false,
+        lastStop: {
+          name: nameOfStop(trip.lastKnownStop.stopId),
+          time: fmtTime(trip.lastKnownStop.at),
+        },
+        next: trip.upcoming.slice(0, 3).map((u) => ({
+          name: nameOfStop(u.stopId),
+          time: fmtTime(u.arrival),
+        })),
+      },
     };
   };
 
@@ -185,6 +236,10 @@ map.on("load", async () => {
       }
       snapshot = next;
       clockSkew = snapshot.asOf - Date.now();
+      // Fold the fresh frame into the running estimate, re-basing each Trip onto
+      // where it is being rendered right now (doc02.06). Uses the just-updated
+      // clockSkew so the re-base time matches the frame loop's clock.
+      estimator.ingest(snapshot, tracks, Date.now() + clockSkew);
     } catch (err) {
       console.warn("trip poll failed", err);
     } finally {
@@ -194,24 +249,13 @@ map.on("load", async () => {
 
   const frame = () => {
     if (snapshot) {
-      const now = Date.now() + clockSkew;
-      const poses: TrainPose[] = [];
-      const drops = new Map<string, number>();
-      for (const t of snapshot.trips) {
-        const r = resolveTrip(t, tracks, now);
-        if (r.ok) {
-          poses.push(r.pose);
-        } else {
-          const key = `${r.cause}:${r.routeId}`;
-          drops.set(key, (drops.get(key) ?? 0) + 1);
-        }
-      }
+      const poses = estimator.poses(Date.now() + clockSkew);
       networkLayer.setTrains(poses);
       if (statsPanel.open) {
         statsPanel.tally = {
           total: snapshot.trips.length,
           rendered: poses.length,
-          drops,
+          drops: estimator.drops,
         };
       }
     }

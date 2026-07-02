@@ -114,27 +114,24 @@ export type SegmentCollection = FeatureCollection<
   SegmentProperties
 >;
 
-// --- Track junction graph (doc02.05) ------------------------------------
-// The topology the renderer needs to stitch segments where they meet or cross.
-// Facts only — the pipeline computes *what is true* about the network (which edges
-// meet, which cross, who has priority); the renderer owns *how* each kind is drawn
-// (doc01.03). `seg` fields index SegmentCollection.features.
+// --- Track junctions (doc02.05) -----------------------------------------
+// Where two tracks cross at different grade (a transversal interior intersection,
+// not a merge). Facts only — the pipeline finds the crossings and who passes over.
+// The grade separation is then baked as an elevation profile rather than left to the
+// renderer: for each segment, a per-vertex vertical offset (meters, parallel to that
+// feature's coordinates) that ramps the `over` side up over a crossing and back down,
+// so floor and walls lift together with no tear. Indices reference
+// SegmentCollection.features; `elevation` is parallel to features (empty => all zero).
 
-export interface EdgeEnd {
-  seg: number;
-  end: "start" | "end"; // which end of that segment touches the node
+export interface TrackCrossing {
+  point: LngLat;
+  over: number; // segment raised over the crossing
+  under: number; // segment passing beneath
 }
 
-export type TrackNode =
-  // Three or more edge-ends coincide with distinct outgoing directions: a real
-  // split/merge whose gap between diverging ribbons the renderer fills with a gore.
-  | { kind: "junction"; point: LngLat; ends: EdgeEnd[] }
-  // Two unconnected segments cross in space (e.g. a line passing over another):
-  // the renderer grade-separates them, drawing `over` above `under`.
-  | { kind: "crossing"; point: LngLat; over: number; under: number };
-
 export interface TrackGraph {
-  nodes: TrackNode[];
+  crossings: TrackCrossing[];
+  elevation: number[][];
 }
 
 // --- Linear-reference index (motion) ------------------------------------

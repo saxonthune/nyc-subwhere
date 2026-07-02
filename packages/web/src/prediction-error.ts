@@ -17,6 +17,11 @@ export interface TripError {
   actualDist: number; // new keyframes at new asOf, meters along track
   err: number; // actualDist - predDist (signed); +ve = further along than predicted
   staleMs: number; // asOf - prev lastKnownStop.at: age of the prediction's anchor
+  // Stations of the trip's track lying in (actualDist, predDist] — Stations the
+  // OLD frame had already glided the train past that the fresh frame shows it had
+  // not reached. This is the doc01.03 "Position Honesty" violation count: each one
+  // is a false station passage. Zero when the old frame sat behind the fresh one.
+  overshotStations: number;
 }
 
 export interface PredictionErrorRecord {
@@ -39,7 +44,10 @@ export interface PredictionErrorRecord {
     max: number;
     meanSigned: number;
   };
-  byRoute: Record<string, { n: number; mean: number; p95: number }>;
+  byRoute: Record<
+    string,
+    { n: number; mean: number; p95: number; meanSigned: number }
+  >;
   trips: TripError[];
 }
 
@@ -73,6 +81,10 @@ export function predictionErrors(
       lineSwitched++;
       continue;
     }
+    let overshotStations = 0;
+    for (const s of actual.track.stops) {
+      if (s.dist > actual.dist && s.dist <= pred.dist) overshotStations++;
+    }
     errors.push({
       tripId: t.tripId,
       routeId: t.routeId,
@@ -81,6 +93,7 @@ export function predictionErrors(
       actualDist: actual.dist,
       err: actual.dist - pred.dist,
       staleMs: asOf - p.lastKnownStop.at,
+      overshotStations,
     });
   }
 
@@ -115,19 +128,27 @@ export function predictionErrors(
 
 function byRoute(
   errors: TripError[],
-): Record<string, { n: number; mean: number; p95: number }> {
-  const groups = new Map<string, number[]>();
+): Record<
+  string,
+  { n: number; mean: number; p95: number; meanSigned: number }
+> {
+  const groups = new Map<string, TripError[]>();
   for (const e of errors) {
     const g = groups.get(e.routeId) ?? [];
-    g.push(Math.abs(e.err));
+    g.push(e);
     groups.set(e.routeId, g);
   }
-  const out: Record<string, { n: number; mean: number; p95: number }> = {};
-  for (const [routeId, vals] of groups) {
+  const out: Record<
+    string,
+    { n: number; mean: number; p95: number; meanSigned: number }
+  > = {};
+  for (const [routeId, es] of groups) {
+    const abs = es.map((e) => Math.abs(e.err));
     out[routeId] = {
-      n: vals.length,
-      mean: round(mean(vals)),
-      p95: round(percentile(vals, 0.95)),
+      n: es.length,
+      mean: round(mean(abs)),
+      p95: round(percentile(abs, 0.95)),
+      meanSigned: mean(es.map((e) => e.err)),
     };
   }
   return out;

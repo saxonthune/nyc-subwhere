@@ -6,6 +6,7 @@
 
 import type {
   LngLat,
+  RenderSnapshot,
   Track,
   TrackIndex,
   TripState,
@@ -72,17 +73,103 @@ export function indexTracks(index: TrackIndex): Map<string, Track> {
   return m;
 }
 
+// How far short of the next, unreached Station a train holds (doc01.03 "Position
+// Honesty"): the render may run ahead of the train's true point along the Segment
+// but must not reach the platform until a fresher frame observes arrival there.
+// Roughly a train length, so the gap reads as "approaching", not "arrived".
+const STATION_HOLD_MARGIN_M = 25;
+
 export type DropCause = "noTrack" | "noStop";
 export type TripResolution =
   | { ok: true; pose: TrainPose }
   | { ok: false; cause: DropCause; routeId: string };
 
+// One resolved travel segment for a Trip: from the last OBSERVED station to the
+// next Station it is approaching but has not been observed to reach. The runway is
+// exactly this one segment (doc01.03 "Position Honesty"): stops beyond `B` are not
+// interpolated toward — we cannot assert the train reached even the one in front.
+// `cap` is the honesty bound, a short margin short of the unreached Station.
+// Distances are meters along `track`; times are epoch ms.
+interface Segment {
+  track: Track;
+  fromDist: number; // last observed station
+  fromT: number;
+  toDist: number; // next station (raw); == fromDist when none is resolvable
+  toT: number;
+  cap: number; // hold-short bound: toDist - margin, floored at fromDist
+  hasNext: boolean;
+}
+
+type SegmentResolution =
+  | { ok: true; seg: Segment }
+  | { ok: false; cause: DropCause; routeId: string };
+
+function segmentOf(
+  trip: TripState,
+  tracks: Map<string, Track>,
+): SegmentResolution {
+  const track = tracks.get(
+    trackKey(bakedRouteId(trip.routeId), trip.direction),
+  );
+  if (!track) return { ok: false, cause: "noTrack", routeId: trip.routeId };
+
+  const distByStop = new Map<string, number>();
+  for (const s of track.stops) distByStop.set(s.stopId, s.dist);
+
+  const fromDist = distByStop.get(trip.lastKnownStop.stopId);
+  if (fromDist == null) {
+    return { ok: false, cause: "noStop", routeId: trip.routeId };
+  }
+
+  // The next resolvable upcoming Station bounds the runway.
+  let toDist = fromDist;
+  let toT = trip.lastKnownStop.at;
+  let hasNext = false;
+  for (const u of trip.upcoming) {
+    const d = distByStop.get(u.stopId);
+    if (d == null) continue;
+    toDist = d;
+    toT = u.arrival;
+    hasNext = true;
+    break;
+  }
+
+  const cap = Math.max(fromDist, toDist - STATION_HOLD_MARGIN_M);
+  return {
+    ok: true,
+    seg: {
+      track,
+      fromDist,
+      fromT: trip.lastKnownStop.at,
+      toDist,
+      toT,
+      cap,
+      hasNext,
+    },
+  };
+}
+
+// Honest position along the one segment at `nowMs`: glide from the observed
+// station toward the next by wall-clock, but never past the hold-short cap.
+function segPos(seg: Segment, nowMs: number): number {
+  let d: number;
+  if (!seg.hasNext || nowMs <= seg.fromT) d = seg.fromDist;
+  else if (nowMs >= seg.toT) d = seg.toDist;
+  else
+    d =
+      seg.fromDist +
+      ((seg.toDist - seg.fromDist) * (nowMs - seg.fromT)) /
+        (seg.toT - seg.fromT || 1);
+  return Math.min(d, seg.cap);
+}
+
 // The trip's Position Estimate as a scalar distance along its Track, plus the
-// Track itself. resolveTrip reads a point off this for rendering; the
-// prediction-error metric compares two of these (same trip, two snapshots,
-// one time) as a signed meters-along-track jump. `pastRunway` is true once
-// nowMs has run beyond the last keyframe (or there is only one) — the position
-// is then a hold, not an interpolation (doc01.03 "Uncertain Position").
+// Track itself. This is the STATELESS one-frame estimate: the prediction-error
+// metric compares two of these (same trip, two snapshots, one time) as a signed
+// meters-along-track jump. The Board itself renders the stateful TripEstimator
+// below, which folds successive frames together. `pastRunway` is true once nowMs
+// has run past the segment's predicted arrival (or no next station is known): the
+// position is then a hold-short, not a glide (doc01.03 "Uncertain Position").
 export type DistResolution =
   | { ok: true; track: Track; dist: number; pastRunway: boolean }
   | { ok: false; cause: DropCause; routeId: string };
@@ -92,38 +179,11 @@ export function resolveDist(
   tracks: Map<string, Track>,
   nowMs: number,
 ): DistResolution {
-  const track = tracks.get(
-    trackKey(bakedRouteId(trip.routeId), trip.direction),
-  );
-  if (!track) {
-    return { ok: false, cause: "noTrack", routeId: trip.routeId };
-  }
-
-  const distByStop = new Map<string, number>();
-  for (const s of track.stops) distByStop.set(s.stopId, s.dist);
-
-  // Keyframes are (distance-along-track, time): the last known stop, then each
-  // upcoming stop the track carries. A stop with a later departure than arrival
-  // gets a second keyframe at the same distance — the train holds there for the
-  // dwell instead of gliding through it (doc02.04), which is where the old
-  // model ran ahead of reality.
-  const kf: { dist: number; t: number }[] = [];
-  const d0 = distByStop.get(trip.lastKnownStop.stopId);
-  if (d0 == null) {
-    return { ok: false, cause: "noStop", routeId: trip.routeId };
-  }
-  kf.push({ dist: d0, t: trip.lastKnownStop.at });
-  for (const u of trip.upcoming) {
-    const d = distByStop.get(u.stopId);
-    if (d == null) continue;
-    kf.push({ dist: d, t: u.arrival });
-    if (u.departure != null && u.departure > u.arrival) {
-      kf.push({ dist: d, t: u.departure });
-    }
-  }
-
-  const pastRunway = kf.length === 1 || nowMs > kf[kf.length - 1].t;
-  return { ok: true, track, dist: distAt(kf, nowMs), pastRunway };
+  const r = segmentOf(trip, tracks);
+  if (!r.ok) return r;
+  const { seg } = r;
+  const pastRunway = !seg.hasNext || nowMs > seg.toT;
+  return { ok: true, track: seg.track, dist: segPos(seg, nowMs), pastRunway };
 }
 
 export function resolveTrip(
@@ -144,6 +204,105 @@ export function resolveTrip(
   };
 }
 
+interface Basis {
+  tripId: string;
+  track: Track;
+  color: string;
+  fromDist: number;
+  fromT: number;
+  toDist: number; // the hold-short cap
+  toT: number;
+  hasNext: boolean;
+  stalled: boolean;
+}
+
+// Where the estimate places a train at `nowMs`: glide fromDist -> toDist (the
+// hold-short cap) over fromT -> toT, holding at either end.
+function basisPos(b: Basis, nowMs: number): number {
+  if (nowMs <= b.fromT) return b.fromDist;
+  if (!b.hasNext || nowMs >= b.toT) return b.toDist;
+  const f = (nowMs - b.fromT) / (b.toT - b.fromT || 1);
+  return b.fromDist + (b.toDist - b.fromDist) * f;
+}
+
+// Stateful, forward-only position estimator (doc02.06 "Reconciling frames"). The
+// stateless resolveDist recomputes absolute position from each frame's noisy
+// anchor + predicted ETA, so ETA jitter snaps trains backward. The estimator
+// instead treats each snapshot as a CORRECTION to the position already on screen:
+// it re-bases every Trip's glide to start from where it is being rendered right
+// now, heading to its next unreached Station. A Trip therefore only moves forward
+// (a delay reads as deceleration, not a rewind) except for two honest corrections
+// — snapping forward onto a newly OBSERVED station, and pulling back to the
+// hold-short cap if it had over-glided. Continuous by construction: at the instant
+// of re-basing, from_dist equals the shown position, so only the future pace
+// changes, not the point.
+export class TripEstimator {
+  private readonly bases = new Map<string, Basis>();
+  // "cause:routeId" -> count, from the last ingest, for the Advanced Stats tally.
+  readonly drops = new Map<string, number>();
+
+  get count(): number {
+    return this.bases.size;
+  }
+
+  ingest(
+    snapshot: RenderSnapshot,
+    tracks: Map<string, Track>,
+    nowMs: number,
+  ): void {
+    this.drops.clear();
+    const live = new Set<string>();
+    for (const trip of snapshot.trips) {
+      const r = segmentOf(trip, tracks);
+      if (!r.ok) {
+        const key = `${r.cause}:${r.routeId}`;
+        this.drops.set(key, (this.drops.get(key) ?? 0) + 1);
+        continue;
+      }
+      const { seg } = r;
+      live.add(trip.tripId);
+      const prev = this.bases.get(trip.tripId);
+      // Where the train is on screen this instant: the running estimate if we have
+      // one on the same track, else this frame's own honest placement.
+      const shown =
+        prev && prev.track === seg.track
+          ? basisPos(prev, nowMs)
+          : segPos(seg, nowMs);
+      // Never backward below what we show, never below the observed station, never
+      // past the hold-short cap.
+      const fromDist = Math.min(Math.max(shown, seg.fromDist), seg.cap);
+      this.bases.set(trip.tripId, {
+        tripId: trip.tripId,
+        track: seg.track,
+        color: colorFor(trip.routeId),
+        fromDist,
+        fromT: nowMs,
+        toDist: seg.cap,
+        toT: seg.toT,
+        hasNext: seg.hasNext,
+        stalled: trip.status === "stalled",
+      });
+    }
+    for (const id of [...this.bases.keys()]) {
+      if (!live.has(id)) this.bases.delete(id);
+    }
+  }
+
+  poses(nowMs: number): TrainPose[] {
+    const out: TrainPose[] = [];
+    for (const b of this.bases.values()) {
+      const uncertain = b.stalled || !b.hasNext || nowMs > b.toT;
+      out.push({
+        tripId: b.tripId,
+        color: b.color,
+        uncertain,
+        ...pointAt(b.track, basisPos(b, nowMs)),
+      });
+    }
+    return out;
+  }
+}
+
 // Express-diamond variants ("6X", "7X") share their trunk color, so strip a
 // trailing X before the lookup.
 function colorFor(routeId: string): string {
@@ -152,21 +311,6 @@ function colorFor(routeId: string): string {
     ROUTE_COLOR[routeId.replace(/X$/, "")] ??
     FALLBACK_COLOR
   );
-}
-
-// Interpolate distance from the keyframes, clamped to the runway ends. (The
-// lost-runway blink for nowMs past the last keyframe is a later behavior; here
-// the train simply holds at its last known stop.)
-function distAt(kf: { dist: number; t: number }[], nowMs: number): number {
-  const last = kf[kf.length - 1];
-  if (kf.length === 1 || nowMs <= kf[0].t) return kf[0].dist;
-  if (nowMs >= last.t) return last.dist;
-  let i = 0;
-  while (i < kf.length - 1 && nowMs > kf[i + 1].t) i++;
-  const a = kf[i];
-  const b = kf[i + 1];
-  const f = (nowMs - a.t) / (b.t - a.t || 1);
-  return a.dist + (b.dist - a.dist) * f;
 }
 
 // Walk the track polyline to a distance, returning the point and the bearing of

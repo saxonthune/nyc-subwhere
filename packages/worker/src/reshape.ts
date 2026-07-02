@@ -1,16 +1,21 @@
-// FeedMessage -> RenderSnapshot (doc02.04). Decodes are done by the caller; this
-// reshapes: filter to live trains, normalize units, and express each Trip as
-// lastKnownStop + upcoming for the web app to interpolate against.
-//
-// The feed gives no train coordinates (NYCT never populates VehiclePosition.
-// position — see `just feed-probe`); the only position signal is a stopId plus a
-// currentStatus saying whether the train is AT that stop or still approaching it.
-// A majority are approaching, so the reported stop is usually *ahead* of the
-// train, not behind it. Placing the anchor correctly therefore needs memory of
-// where the train last was — the departed stop is recovered by diffing across
-// polls, which is also what surfaces a stall (doc02.04). buildSnapshot takes a
-// caller-owned TripMemory map so that state lives at the request boundary and the
-// reshape stays a deterministic function of (feed, now, memory).
+// FeedMessage -> RenderSnapshot (doc02.04), reshaped around observed motion
+// (doc02.06). The feed gives one hard positional fact per poll — at `timestamp`
+// the train is {at|approaching} `stopId`, with no coordinate (NYCT never
+// populates VehiclePosition.position; see `just feed-probe`) — plus predicted
+// arrival times whose tails are volatile. So position is recovered by:
+//   * treating an advance of the referenced stop as an OBSERVED pass event, and
+//     anchoring the train's rear at that stop, timed to the middle of the poll
+//     window in which the pass must have happened (not the detecting poll, which
+//     runs ~½ poll late);
+//   * COMMITTING the predicted arrival to the stop ahead at the moment of
+//     departure and dead-reckoning against that frozen time, so mid-segment ETA
+//     jitter does not move the train;
+//   * refusing to render past the last observation: if the committed arrival
+//     passes with no observed arrival, the train is stalled somewhere on the
+//     segment — hold it at the next stop and let the Board blink it, rather than
+//     assert an arrival never seen.
+// State lives at the request boundary (a caller-owned TripMemory), so the reshape
+// stays a deterministic function of (feed, now, memory).
 
 import type {
   Direction,
@@ -29,22 +34,19 @@ const SOUTH = 3;
 // still ahead of the train.
 const STOPPED_AT = 1;
 
-// A trip is called stalled once it has been approaching the same stop for a
-// while AND its predicted arrival has been pushed back by a comparable amount —
-// the signature of a train not closing the gap, distinct from a long express run
-// whose ETA holds steady. Both guards matter: the age gate rejects noise, the
-// slip gate rejects legitimately long segments.
-const STALL_MIN_APPROACH_MS = 45_000;
-const STALL_SLIP_MS = 45_000;
+// Fallback half-window when we have no prior sighting to size the poll gap from.
+const HALF_POLL_MS = 15_000;
+
+// A committed arrival overrun by more than this with no observed arrival means
+// the train is stuck on the segment, not merely a little slow (doc02.06).
+const STALL_GRACE_MS = 45_000;
 
 export interface TripMem {
-  atStopId: string | null; // last stop seen STOPPED_AT
-  departedStopId: string | null; // stop the train has left (the back anchor)
-  departedAt: number | null; // when we first saw it leave (poll-quantized)
-  approachedStopId: string | null; // stop currently being approached
-  approachedSince: number | null; // when this approach began
-  approachedArrival: number | null; // last predicted arrival to it, for slip
-  slipMs: number; // accumulated pushback of that arrival
+  frontStopId: string | null; // stop last referenced (at, or being approached)
+  departedStopId: string | null; // stop the train was last observed to leave
+  departedAt: number | null; // t_leftA, the observed departure (window midpoint)
+  committedArrival: number | null; // t_reachB, frozen when the segment began
+  lastSeenAt: number | null; // previous poll time for this trip, to size the gap
 }
 
 export type TripMemory = Map<string, TripMem>;
@@ -78,6 +80,7 @@ export function buildSnapshot(
 ): RenderSnapshot {
   const seen = sharedSeen ?? new Set<string>();
   const prune = sharedSeen === undefined;
+
   const vehicleByTrip = new Map<
     string,
     transit_realtime.VehiclePosition.$Properties
@@ -115,80 +118,79 @@ export function buildSnapshot(
     const vehicle = vehicleByTrip.get(tripId);
     // Without a vehicle we have only the predicted stops; the first is the next
     // one the train will reach, so treat it as being approached.
-    const reportedStop = vehicle?.stopId ?? arrivals[0].stopId;
+    const front = vehicle?.stopId ?? arrivals[0].stopId;
     const atStop = vehicle ? vehicle.currentStatus === STOPPED_AT : false;
-    const arrivalOf = (stopId: string) =>
-      arrivals.find((a) => a.stopId === stopId)?.arrival ?? null;
+    const frontIdx = arrivals.findIndex((a) => a.stopId === front);
+    const arrivalOfFront =
+      frontIdx >= 0
+        ? arrivals[frontIdx].arrival
+        : (arrivalOf(arrivals, front) ?? nowMs);
 
     const mem = memory.get(tripId) ?? freshMem();
     seen.add(tripId);
 
+    // An advance of the referenced stop is an observed pass event: the train has
+    // left its previous front. Anchor the departure at the middle of the window
+    // it must have happened in, and freeze the arrival to the new front.
+    if (front !== mem.frontStopId) {
+      const gap =
+        mem.lastSeenAt != null ? nowMs - mem.lastSeenAt : 2 * HALF_POLL_MS;
+      mem.departedStopId = mem.frontStopId;
+      mem.departedAt = nowMs - gap / 2;
+      mem.committedArrival = arrivalOfFront;
+      mem.frontStopId = front;
+    }
+    mem.lastSeenAt = nowMs;
+    memory.set(tripId, mem);
+
     let lastKnownStop: TripState["lastKnownStop"];
     let upcoming: StopArrival[];
-    let status: TripState["status"];
+    let status: TripState["status"] = "progressing";
 
     if (atStop) {
-      // The train is at reportedStop now: anchor there and glide toward the
-      // stops strictly ahead. Departed-stop memory is irrelevant while stopped.
-      lastKnownStop = { stopId: reportedStop, at: nowMs };
-      const idx = arrivals.findIndex((a) => a.stopId === reportedStop);
-      upcoming = idx >= 0 ? arrivals.slice(idx + 1) : arrivals;
-      mem.atStopId = reportedStop;
-      mem.approachedStopId = null;
-      mem.approachedSince = null;
-      mem.approachedArrival = null;
-      mem.slipMs = 0;
-      status = "progressing";
+      // Observed AT the front stop: anchor there, glide toward the stops ahead.
+      lastKnownStop = { stopId: front, at: nowMs };
+      upcoming = frontIdx >= 0 ? arrivals.slice(frontIdx + 1) : arrivals;
+    } else if (mem.departedStopId != null && mem.departedAt != null) {
+      // Approaching the front from a known departed stop: dead-reckon the
+      // committed segment (departed -> front at the frozen arrival), then hand
+      // the live predictions beyond it as runway.
+      lastKnownStop = { stopId: mem.departedStopId, at: mem.departedAt };
+      const committed: StopArrival = {
+        stopId: front,
+        arrival: mem.committedArrival ?? arrivalOfFront,
+        departure: frontIdx >= 0 ? arrivals[frontIdx].departure : null,
+      };
+      const beyond = frontIdx >= 0 ? arrivals.slice(frontIdx + 1) : [];
+      const overran =
+        mem.committedArrival != null &&
+        nowMs > mem.committedArrival + STALL_GRACE_MS;
+      if (overran) {
+        // Committed arrival passed with no observed arrival -> stuck on the
+        // segment. Truncate the runway at the front so the Board holds it there
+        // and blinks, instead of gliding onto stops it has not reached.
+        upcoming = [committed];
+        status = "stalled";
+      } else {
+        upcoming = [committed, ...beyond];
+      }
     } else {
-      // The train is approaching reportedStop, which is therefore ahead of it.
-      if (mem.approachedStopId !== reportedStop) {
-        // A fresh approach: the train has just left the stop it was parked at.
-        mem.departedStopId = mem.atStopId;
-        mem.departedAt = nowMs;
-        mem.approachedStopId = reportedStop;
-        mem.approachedSince = nowMs;
-        mem.approachedArrival = arrivalOf(reportedStop);
-        mem.slipMs = 0;
-      } else {
-        // Still approaching: accumulate any pushback of the predicted arrival.
-        const arr = arrivalOf(reportedStop);
-        if (arr != null && mem.approachedArrival != null) {
-          mem.slipMs += arr - mem.approachedArrival;
-        }
-        if (arr != null) mem.approachedArrival = arr;
-      }
-
-      const approachAge = nowMs - (mem.approachedSince ?? nowMs);
-      status =
-        approachAge >= STALL_MIN_APPROACH_MS && mem.slipMs >= STALL_SLIP_MS
-          ? "stalled"
-          : "progressing";
-
-      const idx = arrivals.findIndex((a) => a.stopId === reportedStop);
-      if (mem.departedStopId != null && mem.departedAt != null) {
-        // Anchor behind, at the departed stop, and interpolate into reportedStop
-        // and beyond — the fix for the reported-stop-is-ahead misplacement.
-        lastKnownStop = { stopId: mem.departedStopId, at: mem.departedAt };
-        upcoming = idx >= 0 ? arrivals.slice(idx) : arrivals;
-      } else {
-        // First sighting mid-transit, no departed stop known: hold at the
-        // approached stop until its predicted arrival rather than guess a
-        // segment behind it. Self-corrects once we observe it stop somewhere.
-        lastKnownStop = {
-          stopId: reportedStop,
-          at: arrivalOf(reportedStop) ?? nowMs,
-        };
-        upcoming = idx >= 0 ? arrivals.slice(idx + 1) : arrivals;
-      }
+      // First sighting mid-transit, no departed stop known: hold at the front
+      // until its arrival rather than guess a segment behind it. Self-corrects
+      // once the train is observed to pass a stop.
+      lastKnownStop = {
+        stopId: front,
+        at: mem.committedArrival ?? arrivalOfFront,
+      };
+      upcoming = frontIdx >= 0 ? arrivals.slice(frontIdx + 1) : arrivals;
     }
 
-    memory.set(tripId, mem);
     if (upcoming.length === 0) continue; // nothing ahead to interpolate toward
 
     trips.push({
       tripId,
       routeId,
-      direction: directionOf(nyct.direction, reportedStop),
+      direction: directionOf(nyct.direction, front),
       lastKnownStop,
       upcoming,
       status,
@@ -207,14 +209,16 @@ export function pruneMemory(memory: TripMemory, seen: Set<string>): void {
   for (const id of memory.keys()) if (!seen.has(id)) memory.delete(id);
 }
 
+function arrivalOf(arrivals: StopArrival[], stopId: string): number | null {
+  return arrivals.find((a) => a.stopId === stopId)?.arrival ?? null;
+}
+
 function freshMem(): TripMem {
   return {
-    atStopId: null,
+    frontStopId: null,
     departedStopId: null,
     departedAt: null,
-    approachedStopId: null,
-    approachedSince: null,
-    approachedArrival: null,
-    slipMs: 0,
+    committedArrival: null,
+    lastSeenAt: null,
   };
 }

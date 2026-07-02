@@ -7,6 +7,14 @@ export interface DropTally {
   drops: Map<string, number>;
 }
 
+export interface CameraReadout {
+  lng: number;
+  lat: number;
+  zoom: number;
+  pitch: number;
+  bearing: number;
+}
+
 // Advanced Stats (doc01.03): live per-frame drop diagnostics in a panel styled
 // like the inspector, opened from the Menu. `open` gates it; `tally` is refreshed
 // each frame by main.ts only while open, so a closed panel costs no re-renders.
@@ -15,17 +23,21 @@ export class StatsPanel extends LitElement {
     open: { attribute: false, type: Boolean },
     tally: { attribute: false },
     error: { attribute: false },
+    camera: { attribute: false },
   };
   declare open: boolean;
   declare tally: DropTally | null;
   /** Latest prediction-error record, refreshed once per poll. */
   declare error: PredictionErrorRecord | null;
+  /** Live camera pose, refreshed on map move while open — for the shot-at harness. */
+  declare camera: CameraReadout | null;
 
   constructor() {
     super();
     this.open = false;
     this.tally = null;
     this.error = null;
+    this.camera = null;
   }
 
   static styles = css`
@@ -94,6 +106,7 @@ export class StatsPanel extends LitElement {
           </button>
         </header>
         <pre class="body">${[
+          cameraLines(this.camera),
           this.tally ? lines(this.tally) : "…",
           errorLines(this.error),
         ]
@@ -102,6 +115,17 @@ export class StatsPanel extends LitElement {
       </div>
     `;
   }
+}
+
+function cameraLines(c: CameraReadout | null): string {
+  if (!c) return "";
+  const n = (v: number, d: number) => v.toFixed(d);
+  // Second line is paste-ready args for `just shot <out> …` so a spot can be
+  // handed straight to the screenshot harness.
+  return [
+    `center: ${n(c.lng, 5)}, ${n(c.lat, 5)}  z${n(c.zoom, 2)} p${Math.round(c.pitch)} b${Math.round(c.bearing)}`,
+    `shot: ${n(c.lng, 5)} ${n(c.lat, 5)} ${n(c.zoom, 2)} ${Math.round(c.pitch)} ${Math.round(c.bearing)}`,
+  ].join("\n");
 }
 
 function lines(t: DropTally): string {

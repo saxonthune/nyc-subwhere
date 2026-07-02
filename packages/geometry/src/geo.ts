@@ -30,3 +30,6 @@ const NYC_LAT_COS = Math.cos((40.72 * Math.PI) / 180);
 export function projectNyc(p: LngLat): [number, number] {
   return [p[0] * M_PER_DEG * NYC_LAT_COS, p[1] * M_PER_DEG];
 }
+export function unprojectNyc(m: [number, number]): LngLat {
+  return [m[0] / (M_PER_DEG * NYC_LAT_COS), m[1] / M_PER_DEG];
+}

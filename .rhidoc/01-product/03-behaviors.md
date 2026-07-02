@@ -1,6 +1,6 @@
 ---
 title: Behaviors
-summary: EARS behavioral intent for the Board — render live trips, glide between polls, ride track by stops (off-route reroutes), blink when position is uncertain, reveal directional tracks on zoom, give every route on shared track representation, render the network with depth (raised track, pucks, platform boxes), seat it on grey extruded borough land over a dark-navy water disc that fades into the backdrop, tap to inspect
+summary: EARS behavioral intent for the Board — render live trips, glide between polls, never render a train at or past a Station it has not been observed to reach (segment-ahead error is fine, station-crossing is not), ride track by stops (off-route reroutes), blink when position is uncertain, reveal directional tracks on zoom, give every route on shared track representation, render the network with depth (raised track, pucks, platform boxes), seat it on grey extruded borough land over a dark-navy water disc that fades into the backdrop, tap to inspect
 tags: [product, behaviors, ears, rendering, interaction]
 deps: [doc01.01, doc02.01, doc02.03, doc02.05]
 ---
@@ -35,6 +35,20 @@ The feed steps every ~30s but the trains must not (doc02.01).
   smooth between polls.
 - When a fresher frame arrives, the Board shall re-anchor each train to it without
   a visible jump.
+
+## Position Honesty
+
+The map is read to decide whether to run for a train, so the costly error is a false
+*station* passage — telling a rider a train has left a platform it has not. Between
+Stations the feed carries no position, so the rendered train may sit ahead of where it
+truly is along a Segment; that error is unavoidable and acceptable. Crossing a Station
+the train has not been observed to reach is not.
+
+- If the feed has not observed a train arriving at a Station, then the Board shall not
+  render that train at or beyond that Station.
+- While a train runs between two Stations, the Board may render it ahead of its true
+  position along that Segment, but shall hold it short of the approaching Station until
+  arrival there is observed.
 
 ## Off-Route Motion
 

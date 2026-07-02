@@ -17,6 +17,7 @@ import { parse } from "csv-parse";
 import { parse as parseSync } from "csv-parse/sync";
 import { buildGraph } from "./build-graph";
 import { buildSegments } from "./build-segments";
+import { conformMerges } from "./conform-merges";
 import { buildStations } from "./build-stations";
 import { buildTracks } from "./build-tracks";
 import { type Row, normalize } from "./gtfs-normalize";
@@ -115,6 +116,9 @@ async function main(): Promise<void> {
     mergeReport,
     preMerge,
   } = buildSegments(located, normalized);
+  // Reshape branch tails onto the trunks they join before anything downstream reads
+  // the geometry, so crossings, elevation, and picking all see the conformed shape.
+  const conformedMerges = conformMerges(segments);
   const tracks = buildTracks(located, feedVersion);
   const stations = buildStations(canonical, normalized);
   const graph = buildGraph(segments);
@@ -158,12 +162,10 @@ async function main(): Promise<void> {
     ),
   ]);
 
-  const junctions = graph.nodes.filter((n) => n.kind === "junction").length;
-  const crossings = graph.nodes.filter((n) => n.kind === "crossing").length;
   console.log(
     `geometry: ${stations.features.length} stations, ${segments.features.length} segments ` +
-      `(${mergeReport.mergedGroups} corridor-merged groups), ` +
-      `${junctions} junctions + ${crossings} crossings, ` +
+      `(${mergeReport.mergedGroups} corridor-merged groups, ${conformedMerges} branch tails conformed), ` +
+      `${graph.crossings.length} crossings, ` +
       `${tracks.tracks.length} tracks (feed ${feedVersion ?? "unknown"}) -> ${path.relative(REPO_ROOT, OUT_DIR)}`,
   );
 }

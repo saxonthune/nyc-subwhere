@@ -1,30 +1,29 @@
-// Stage 4: junction graph (doc02.05). Reads the final segments (edges) and emits
-// the topology the renderer needs to stitch them where they meet or cross —
-// endpoint clusters that branch (junctions) and mid-segment crossings of
-// unconnected edges (with a baked over/under priority). Facts only: this computes
-// what is true about the network; the renderer decides how to draw each node
-// (doc01.03).
+// Stage 4: track junctions (doc02.05). Finds where two tracks cross at different
+// grade — a transversal intersection in the *interior* of both segments (a merge, by
+// contrast, meets at a shared endpoint) — then bakes the grade separation as a
+// per-vertex elevation profile: the `over` segment ramps up over the crossing and
+// back down along its own arc length, so the renderer lifts floor and walls together
+// with no tear (doc01.03).
 
 import type {
-  EdgeEnd,
   LngLat,
   SegmentCollection,
+  TrackCrossing,
   TrackGraph,
-  TrackNode,
 } from "@nyc-subwhere/contract";
 import { projectNyc } from "./geo";
 
-// Endpoints within this fuse into one node; a crossing must land at least this far
-// from either segment's endpoints, else the two edges are connected there (a
-// junction) rather than crossing.
-const CLUSTER_EPS_M = 14;
-// Two outgoing edge directions count as distinct only past this angle, so a
-// straight-through station (two near-opposite directions, doubled by the N/S
-// features) reads as a continuation, not a junction.
-const DIR_EPS_DEG = 20;
-// A crossing shallower than this is a merge/parallel artifact, not a clean cross;
-// skip it so it gets no grade-separation lift.
+// An intersection within this of either segment's endpoint is a merge/branch throat,
+// not a crossing — the two tracks join there rather than pass at different grade.
+const ENDPOINT_EXCLUDE_M = 25;
+// A crossing shallower than this is a near-parallel merge artifact, not a clean
+// cross; skip it so it gets no grade-separation lift.
 const CROSS_MIN_ANGLE_DEG = 20;
+// Grade-separation ramp: the over segment rises this high at the crossing (clears the
+// under wall tops, ~10 m) and eases back to grade over this arc-length each side, as a
+// raised cosine so the profile is C1 (no kink in floor or walls). Meters.
+const CROSS_LIFT_M = 20;
+const CROSS_RAMP_M = 70;
 
 type Pt = [number, number]; // meters
 
@@ -56,66 +55,7 @@ export function buildGraph(segments: SegmentCollection): TrackGraph {
     return { i, ll, m, minX, minY, maxX, maxY, routes: f.properties.routes };
   });
 
-  const nodes: TrackNode[] = [
-    ...junctionNodes(segs),
-    ...crossingNodes(segs),
-  ];
-  return { nodes };
-}
-
-// Cluster segment endpoints; a cluster whose members leave in three or more
-// distinct directions is a branch point. The outgoing direction of an end is the
-// bearing from the endpoint toward its neighbor vertex.
-function junctionNodes(segs: Seg[]): TrackNode[] {
-  interface End {
-    seg: number;
-    end: "start" | "end";
-    p: Pt;
-    ll: LngLat;
-    dir: number; // radians, pointing away from the endpoint into the segment
-  }
-  const ends: End[] = [];
-  for (const s of segs) {
-    if (s.m.length < 2) continue;
-    ends.push({
-      seg: s.i,
-      end: "start",
-      p: s.m[0],
-      ll: s.ll[0],
-      dir: Math.atan2(s.m[1][1] - s.m[0][1], s.m[1][0] - s.m[0][0]),
-    });
-    const n = s.m.length - 1;
-    ends.push({
-      seg: s.i,
-      end: "end",
-      p: s.m[n],
-      ll: s.ll[n],
-      dir: Math.atan2(s.m[n - 1][1] - s.m[n][1], s.m[n - 1][0] - s.m[n][0]),
-    });
-  }
-
-  const clusters: End[][] = [];
-  for (const e of ends) {
-    const c = clusters.find((cl) => dist(centroid(cl.map((x) => x.p)), e.p) <= CLUSTER_EPS_M);
-    if (c) c.push(e);
-    else clusters.push([e]);
-  }
-
-  const out: TrackNode[] = [];
-  for (const cl of clusters) {
-    if (cl.length < 3) continue;
-    if (distinctDirections(cl.map((e) => e.dir)) < 3) continue;
-    const cll = centroidLL(cl.map((e) => e.ll));
-    const ends2: EdgeEnd[] = cl.map((e) => ({ seg: e.seg, end: e.end }));
-    out.push({ kind: "junction", point: cll, ends: ends2 });
-  }
-  return out;
-}
-
-// Pairwise mid-segment crossings of unconnected edges. One crossing per segment
-// pair (the first clean intersection found); the busier edge is drawn on top.
-function crossingNodes(segs: Seg[]): TrackNode[] {
-  const out: TrackNode[] = [];
+  const crossings: TrackCrossing[] = [];
   for (let a = 0; a < segs.length; a++) {
     for (let b = a + 1; b < segs.length; b++) {
       const sa = segs[a];
@@ -130,12 +70,55 @@ function crossingNodes(segs: Seg[]): TrackNode[] {
       const hit = firstCrossing(sa, sb);
       if (!hit) continue;
       const [over, under] = priority(sa, sb);
-      out.push({ kind: "crossing", point: hit, over, under });
+      crossings.push({ point: hit, over, under });
     }
   }
-  return out;
+
+  const elevation = segs.map((s) => new Array<number>(s.m.length).fill(0));
+  for (const c of crossings) {
+    liftOverProfile(segs[c.over], projectNyc(c.point), elevation[c.over]);
+  }
+  return { crossings, elevation };
 }
 
+// Ramp the `over` segment up around a crossing, in the segment's own arc-length domain
+// (not radial distance) so the whole cross-section at each vertex moves as one unit.
+// The crossing's arc position is the nearest point on the polyline; each vertex within
+// CROSS_RAMP_M of it takes a raised-cosine lift, max-combined with any other crossing.
+function liftOverProfile(seg: Seg, point: Pt, out: number[]): void {
+  const cum = [0];
+  for (let i = 1; i < seg.m.length; i++) cum.push(cum[i - 1] + dist(seg.m[i - 1], seg.m[i]));
+
+  let bestD = Infinity;
+  let crossArc = 0;
+  for (let i = 0; i < seg.m.length - 1; i++) {
+    const { d, t } = projPointSeg(point, seg.m[i], seg.m[i + 1]);
+    if (d < bestD) {
+      bestD = d;
+      crossArc = cum[i] + t * (cum[i + 1] - cum[i]);
+    }
+  }
+
+  for (let i = 0; i < seg.m.length; i++) {
+    const dd = Math.abs(cum[i] - crossArc);
+    if (dd >= CROSS_RAMP_M) continue;
+    const h = CROSS_LIFT_M * 0.5 * (1 + Math.cos((Math.PI * dd) / CROSS_RAMP_M));
+    if (h > out[i]) out[i] = h;
+  }
+}
+
+// Distance from p to segment a-b and the clamped parameter t of the foot along a-b.
+function projPointSeg(p: Pt, a: Pt, b: Pt): { d: number; t: number } {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy || 1;
+  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
+  t = Math.min(1, Math.max(0, t));
+  return { d: Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy)), t };
+}
+
+// The first transversal interior intersection of two segments: away from every
+// endpoint (else it is a merge) and steeper than the min angle (else near-parallel).
 function firstCrossing(sa: Seg, sb: Seg): LngLat | null {
   for (let i = 0; i < sa.m.length - 1; i++) {
     const a1 = sa.m[i];
@@ -148,17 +131,9 @@ function firstCrossing(sa: Seg, sb: Seg): LngLat | null {
       const x = a1[0] + t * (a2[0] - a1[0]);
       const y = a1[1] + t * (a2[1] - a1[1]);
       const p: Pt = [x, y];
-      // Connected there (a shared station), not a crossing.
-      if (
-        near(p, sa.m[0]) ||
-        near(p, sa.m[sa.m.length - 1]) ||
-        near(p, sb.m[0]) ||
-        near(p, sb.m[sb.m.length - 1])
-      )
-        continue;
+      if (nearEndpoint(p, sa) || nearEndpoint(p, sb)) continue;
       if (angleBetween(a1, a2, b1, b2) < (CROSS_MIN_ANGLE_DEG * Math.PI) / 180)
         continue;
-      // Lerp the lon/lat by the same parameter as the meter-space hit.
       const p0 = sa.ll[i];
       const p1 = sa.ll[i + 1];
       return [p0[0] + t * (p1[0] - p0[0]), p0[1] + t * (p1[1] - p0[1])];
@@ -167,8 +142,15 @@ function firstCrossing(sa: Seg, sb: Seg): LngLat | null {
   return null;
 }
 
-// Busier edge (more routes, then more of a longer route list, then lexicographic)
-// goes on top. A stable rule, not a semantic claim — swap it here to change policy.
+function nearEndpoint(p: Pt, s: Seg): boolean {
+  return (
+    dist(p, s.m[0]) <= ENDPOINT_EXCLUDE_M ||
+    dist(p, s.m[s.m.length - 1]) <= ENDPOINT_EXCLUDE_M
+  );
+}
+
+// Busier segment (more routes, then longer route list, then lexicographic) goes on
+// top. A stable rule, not a semantic claim about real elevation.
 function priority(sa: Seg, sb: Seg): [number, number] {
   const ka = sa.routes.length;
   const kb = sb.routes.length;
@@ -204,45 +186,6 @@ function angleBetween(a1: Pt, a2: Pt, b1: Pt, b2: Pt): number {
   return Math.acos(Math.min(1, Math.max(-1, Math.abs(dot) / (la * lb))));
 }
 
-function distinctDirections(dirs: number[]): number {
-  const eps = (DIR_EPS_DEG * Math.PI) / 180;
-  const reps: number[] = [];
-  for (const d of dirs) {
-    if (!reps.some((r) => angularDist(r, d) <= eps)) reps.push(d);
-  }
-  return reps.length;
-}
-
-function angularDist(a: number, b: number): number {
-  let d = Math.abs(a - b) % (2 * Math.PI);
-  if (d > Math.PI) d = 2 * Math.PI - d;
-  return d;
-}
-
-function near(a: Pt, b: Pt): boolean {
-  return dist(a, b) <= CLUSTER_EPS_M;
-}
-
 function dist(a: Pt, b: Pt): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1]);
-}
-
-function centroid(ps: Pt[]): Pt {
-  let x = 0;
-  let y = 0;
-  for (const p of ps) {
-    x += p[0];
-    y += p[1];
-  }
-  return [x / ps.length, y / ps.length];
-}
-
-function centroidLL(ps: LngLat[]): LngLat {
-  let x = 0;
-  let y = 0;
-  for (const p of ps) {
-    x += p[0];
-    y += p[1];
-  }
-  return [x / ps.length, y / ps.length];
 }

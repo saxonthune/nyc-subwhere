@@ -122,16 +122,19 @@ export const NETWORK_STYLE = {
       fadeEndZoom: 14.5,
     },
 
-    // Junction handling (doc02.05), driven by the baked track graph. At a junction
-    // node every incident edge is trimmed back `trimRadiusM` and the gap filled with
-    // a flat gore patch, so diverging ribbons meet cleanly and their walls stop at
-    // the mouth. At a crossing the priority edge rides a raised-cosine bridge
-    // `crossLiftM` tall over `bridgeLenM` of track, clearing the other edge's walls
-    // (wallHeight 8) so the two grade-separate instead of z-fighting. Meters.
+    // Junction handling (doc02.05). Grade separation is baked as a per-vertex elevation
+    // profile in the geometry pipeline (build-graph.ts) and branch tails are conformed
+    // onto their trunks (conform-merges.ts), so the renderer just lifts floor and walls
+    // by the profile and sweeps the conformed floors together. A wall piece is then
+    // dropped where another track's floor covers the point `wallOutboardM` beyond that
+    // edge (within `wallSuppressFrac`·halfWidth and a grade within `wallGradeEpsM`) — the
+    // mark of an interior merge edge — so merges lose their facing walls while crossings,
+    // at different baked grades, keep theirs. sampleStepM spaces the floor-sample grid.
     junction: {
-      trimRadiusM: 22,
-      crossLiftM: 14,
-      bridgeLenM: 140,
+      wallOutboardM: 4,
+      wallSuppressFrac: 0.4,
+      wallGradeEpsM: 4,
+      sampleStepM: 6,
     },
   },
 
