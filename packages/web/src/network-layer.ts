@@ -2,6 +2,13 @@ import maplibregl from "maplibre-gl";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { NETWORK_STYLE } from "./network-style";
+import {
+  FlatTrackRenderer,
+  type TrackBuild,
+  type TrackRenderer,
+  type TrackSegment,
+  trackTopY,
+} from "./track-render";
 import { type GlowEffect, cameraDirLocal, createGlow } from "./train-glow";
 import type { TrainPose } from "./trains";
 
@@ -10,9 +17,6 @@ import type { TrainPose } from "./trains";
 const TRAIN_LAYER = 1;
 
 type LngLat = [number, number];
-// colors is the truth from the baked corridor (doc01.03) — one entry for a solid
-// trunk, several for a shared one that draws as a candy-cane tube.
-type Segment = { points: LngLat[]; colors: string[] };
 // One baked borough polygon (doc01.03 Basemap): rings[0] is the outer boundary,
 // any further rings are holes.
 export type BoroughPolygon = LngLat[][];
@@ -30,16 +34,12 @@ export type PickResult =
   | { kind: "station"; stationIndex: number }
   | { kind: "train"; tripId: string };
 
-// Tubes for one color are merged into a single non-indexed mesh, so a raycast
-// hit gives a faceIndex, not a segment. This maps face ranges back: triStart[i]
-// is the first triangle of segIds[i]'s slice within the merged geometry.
-type FaceMap = { triStart: number[]; segIds: number[] };
-
 // A single MapLibre custom layer that renders the whole static network in 3D in
-// one shared Three.js scene (doc02.03): route lines as merged tubes, stations as
-// an instanced "puck" disc above an instanced grey platform box oriented along
-// the track. The puck fades out as the map zooms in, so close in the tubes read
-// over the platform boxes with no puck occluding them.
+// one shared Three.js scene (doc02.03): route track drawn by a swappable
+// TrackRenderer (track-render.ts), stations as an instanced "puck" disc above an
+// instanced grey platform box oriented along the track. The puck fades out as the
+// map zooms in, so close in the track reads over the platform boxes with no puck
+// occluding them.
 //
 // All meshes live in a meter-scaled local frame anchored at `origin`. MapLibre
 // hands us a matrix each frame that maps Mercator coordinates → clip space; the
@@ -68,7 +68,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private glowPositions = new Float32Array(0);
   private glowBearings = new Float32Array(0);
   private glowColors = new Float32Array(0);
-  private tubeMeshes: THREE.Mesh[] = [];
+  private readonly trackRenderer: TrackRenderer = new FlatTrackRenderer();
+  private trackBuild?: TrackBuild;
   private currentPoses: TrainPose[] = [];
   private trainsVisible = true;
   private readonly raycaster = new THREE.Raycaster();
@@ -79,12 +80,12 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   );
   private readonly meterScale = this.origin.meterInMercatorCoordinateUnits();
   private readonly placements: Placement[];
-  private readonly segments: Segment[];
+  private readonly segments: TrackSegment[];
   private readonly boroughs: BoroughPolygon[];
 
   constructor(
     stations: LngLat[],
-    segments: Segment[],
+    segments: TrackSegment[],
     boroughs: BoroughPolygon[] = [],
   ) {
     this.segments = segments;
@@ -129,8 +130,10 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     const land = this.buildLand();
     if (land) this.scene.add(land);
 
-    this.tubeMeshes = this.buildTubes();
-    for (const mesh of this.tubeMeshes) this.scene.add(mesh);
+    this.trackBuild = this.trackRenderer.build(this.segments, {
+      toLocal: (p) => this.toLocal(p),
+    });
+    for (const obj of this.trackBuild.objects) this.scene.add(obj);
     this.pucks = this.buildPucks();
     this.boxes = this.buildBoxes();
     this.pucks.userData.kind = "station";
@@ -170,7 +173,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     const far = new THREE.Vector3(ndcX, ndcY, 1).applyMatrix4(inv);
     this.raycaster.set(near, far.sub(near).normalize());
 
-    const targets: THREE.Object3D[] = [...this.tubeMeshes];
+    const targets: THREE.Object3D[] = [...(this.trackBuild?.objects ?? [])];
     if (this.pucks) targets.push(this.pucks);
     if (this.boxes) targets.push(this.boxes);
     if (this.trains) targets.push(this.trains);
@@ -182,8 +185,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
         if (pose) return { kind: "train", tripId: pose.tripId };
       } else if (kind === "station" && hit.instanceId != null) {
         return { kind: "station", stationIndex: hit.instanceId };
-      } else if (kind === "segment" && hit.faceIndex != null) {
-        const seg = segmentOfFace(hit.object.userData.faceMap, hit.faceIndex);
+      } else if (kind === "segment") {
+        const seg = this.trackBuild?.segmentOfHit(hit);
         if (seg != null) return { kind: "segment", segmentIndex: seg };
       }
     }
@@ -219,93 +222,6 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       },
     );
     this.map.triggerRepaint();
-  }
-
-  // One merged tube mesh per Route color (a handful of draw calls). Each segment
-  // becomes a TubeGeometry along its centerline, riding at y=radius so its
-  // underside rests on the ground plane above the platform boxes. A shared trunk
-  // (colors.length > 1) is split into candy-cane bands, its triangles bucketed by
-  // color, so every mesh still carries just one solid color.
-  private buildTubes(): THREE.Mesh[] {
-    const { tube } = NETWORK_STYLE;
-    // Each entry keeps its owning segment index so the merged mesh can map a
-    // raycast faceIndex back to a segment for the inspector (doc01.03).
-    type Entry = { geo: THREE.BufferGeometry; seg: number };
-    const byColor = new Map<string, Entry[]>();
-    const push = (color: string, geo: THREE.BufferGeometry, seg: number) => {
-      const bucket = byColor.get(color);
-      if (bucket) bucket.push({ geo, seg });
-      else byColor.set(color, [{ geo, seg }]);
-    };
-
-    this.segments.forEach((seg, si) => {
-      // CatmullRomCurve3 degenerates on repeated points (677/892 baked segments
-      // carry consecutive duplicates); drop them so the frame stays defined.
-      const local = dedupeConsecutive(seg.points).map((p) => this.toLocal(p));
-      if (local.length < 2) return;
-      const pts = offsetLeft(local, tube.sideOffsetM).map(
-        ({ x, z }) => new THREE.Vector3(x, tube.radius, z),
-      );
-      const curve = new THREE.CatmullRomCurve3(pts);
-      // Rings spaced a fixed arc-length apart (getPointAt is arc-length
-      // parameterized), so ring density — and thus band size — is uniform across
-      // every segment regardless of its baked vertex count.
-      const length = curve.getLength();
-      const tubular = Math.min(
-        400,
-        Math.max(8, Math.round(length / tube.ringLengthM)),
-      );
-      const geo = new THREE.TubeGeometry(
-        curve,
-        tubular,
-        tube.radius,
-        tube.radialSegments,
-        false,
-      );
-
-      if (seg.colors.length <= 1) {
-        // Match the banded sub-geometries so a bucket merges cleanly: same
-        // attributes (drop uv) and same form (non-indexed, since bandTube emits
-        // non-indexed).
-        geo.deleteAttribute("uv");
-        const solid = geo.toNonIndexed();
-        geo.dispose();
-        push(seg.colors[0] ?? "#ffffff", solid, si);
-        return;
-      }
-      for (const [color, sub] of bandTube(geo, length, tubular, seg.colors)) {
-        push(color, sub, si);
-      }
-      geo.dispose();
-    });
-
-    const meshes: THREE.Mesh[] = [];
-    for (const [color, entries] of byColor) {
-      // mergeGeometries concatenates in push order (useGroups=false), so the
-      // running triangle count gives each entry's face range in the merged mesh.
-      const faceMap: FaceMap = { triStart: [], segIds: [] };
-      let tri = 0;
-      for (const e of entries) {
-        faceMap.triStart.push(tri);
-        faceMap.segIds.push(e.seg);
-        tri += e.geo.getAttribute("position").count / 3;
-      }
-      const merged = mergeGeometries(
-        entries.map((e) => e.geo),
-        false,
-      );
-      for (const e of entries) e.geo.dispose();
-      const mat = new THREE.MeshStandardMaterial({
-        color,
-        emissive: new THREE.Color(color),
-        emissiveIntensity: tube.emissiveIntensity,
-      });
-      const mesh = new THREE.Mesh(merged, mat);
-      mesh.userData.kind = "segment";
-      mesh.userData.faceMap = faceMap;
-      meshes.push(mesh);
-    }
-    return meshes;
   }
 
   // A dark-navy disc surrounding the city, seated a little below ground level so
@@ -398,9 +314,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       this.puckMaterial,
       this.placements.length,
     );
-    // Seat the puck so its top clears the tube top (tube spans 0..2·radius).
-    const centerY =
-      2 * NETWORK_STYLE.tube.radius + puck.clearanceOverTube - puck.height / 2;
+    // Seat the puck so its top clears the top of the track (its wall tops).
+    const centerY = trackTopY() + puck.clearanceOverTube - puck.height / 2;
     const m = new THREE.Matrix4();
     this.placements.forEach((p, i) => {
       m.makeTranslation(p.x, centerY, p.z);
@@ -442,16 +357,16 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     if (!core) return;
 
     const centerY = trainCenterY();
-    const off = NETWORK_STYLE.tube.sideOffsetM;
+    const off = NETWORK_STYLE.track.trainOffsetM;
     const rot = new THREE.Matrix4();
     const pos = new THREE.Matrix4();
     const m = new THREE.Matrix4();
     const color = new THREE.Color();
     poses.forEach((p, i) => {
       const c = this.toLocal(p.lngLat);
-      // Shift onto the same right-of-travel side as the tube (offsetLeft in the
-      // flipped local frame): perpendicular (sin, cos) of the travel bearing, so
-      // the train rides its own track instead of floating on the centerline.
+      // Shift onto the same side as the track ribbon (offsetLeft in the flipped
+      // local frame): perpendicular (sin, cos) of the travel bearing, so the train
+      // rides its own track instead of floating on the centerline.
       const x = c.x + Math.sin(p.bearing) * off;
       const z = c.z + Math.cos(p.bearing) * off;
       rot.makeRotationY(p.bearing);
@@ -536,6 +451,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
 
   private syncZoom = () => {
     const zoom = this.map.getZoom();
+    this.trackBuild?.setZoom(zoom, this.metersPerPixel(zoom));
     if (this.boxes) this.boxes.visible = zoom >= NETWORK_STYLE.box.minZoom;
 
     const { fadeStartZoom, fadeEndZoom } = NETWORK_STYLE.puck;
@@ -544,14 +460,22 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     if (this.puckMaterial) this.puckMaterial.opacity = opacity;
     if (this.pucks) this.pucks.visible = opacity > 0;
   };
+
+  // Ground meters per screen pixel at the map center for a zoom (Web Mercator, 512px
+  // tiles): earth circumference · cos(lat) / (512 · 2^zoom). Feeds the track LOD so
+  // its pattern can be sized in screen space rather than fixed meters.
+  private metersPerPixel(zoom: number): number {
+    const lat = this.map.getCenter().lat;
+    return (40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * 2 ** zoom);
+  }
 }
 
 // Train underside rests `train.clearance` above the puck top, which itself sits
-// `puck.clearanceOverTube` above the tube top (2·tube.radius) — so trains read as
-// sitting on top of both the tubes and the pucks.
+// `puck.clearanceOverTube` above the top of the track — so trains read as sitting
+// on top of both the track and the pucks.
 function trainCenterY(): number {
-  const { tube, puck, train } = NETWORK_STYLE;
-  const puckTop = 2 * tube.radius + puck.clearanceOverTube;
+  const { puck, train } = NETWORK_STYLE;
+  const puckTop = trackTopY() + puck.clearanceOverTube;
   return puckTop + train.clearance + train.height / 2;
 }
 
@@ -604,119 +528,8 @@ function makeWaterTexture(color: string, coreFraction: number): THREE.Texture {
   return tex;
 }
 
-// Largest triStart[i] <= faceIndex gives the segment owning that triangle.
-function segmentOfFace(
-  map: FaceMap | undefined,
-  faceIndex: number,
-): number | null {
-  if (!map) return null;
-  const { triStart, segIds } = map;
-  let lo = 0;
-  let hi = triStart.length - 1;
-  let ans = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (triStart[mid] <= faceIndex) {
-      ans = mid;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return ans >= 0 ? segIds[ans] : null;
-}
-
 function sqDist(a: LngLat, b: LngLat): number {
   const dx = a[0] - b[0];
   const dy = a[1] - b[1];
   return dx * dx + dy * dy;
-}
-
-function dedupeConsecutive(points: LngLat[]): LngLat[] {
-  const out: LngLat[] = [];
-  for (const p of points) {
-    const last = out[out.length - 1];
-    if (!last || last[0] !== p[0] || last[1] !== p[1]) out.push(p);
-  }
-  return out;
-}
-
-// Shift every vertex `d` meters to the left of the local travel direction (the
-// central-difference tangent), in the meter-scaled local frame. Antiparallel N/S
-// shapes get opposite tangents, so the same shift separates them.
-function offsetLeft(
-  pts: { x: number; z: number }[],
-  d: number,
-): { x: number; z: number }[] {
-  const out: { x: number; z: number }[] = [];
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[Math.max(0, i - 1)];
-    const b = pts[Math.min(pts.length - 1, i + 1)];
-    const tx = b.x - a.x;
-    const tz = b.z - a.z;
-    const len = Math.hypot(tx, tz) || 1;
-    // Left-hand perpendicular (-tz, tx) of the unit tangent.
-    out.push({ x: pts[i].x + (-tz / len) * d, z: pts[i].z + (tx / len) * d });
-  }
-  return out;
-}
-
-// Split a tube into candy-cane color bands. TubeGeometry lays vertices out as
-// (tubular+1) rings of (radialSegments+1) verts; ring = floor(idx/ring). Rings are
-// equally spaced in arc length, so ring i sits at i·ringSpacing meters. Color is
-// assigned per tubular quad, not per triangle: both triangles of a quad share the
-// same near ring, so keying off that ring puts every band boundary exactly on a
-// ring (a flat, clean cut). Keying off a triangle centroid instead would split a
-// quad diagonally where a boundary falls between its two triangles' centroids,
-// producing sawtooth teeth around the tube. Band size is in meters, so a chunk is
-// the same length everywhere. Returns one non-indexed geometry per color present.
-function bandTube(
-  geo: THREE.BufferGeometry,
-  length: number,
-  tubular: number,
-  colors: string[],
-): Array<[string, THREE.BufferGeometry]> {
-  const { candy, radialSegments } = NETWORK_STYLE.tube;
-  const ringSpacing = length / tubular; // meters advanced per ring step
-  const ring = radialSegments + 1;
-
-  const pos = geo.getAttribute("position");
-  const nor = geo.getAttribute("normal");
-  const index = geo.getIndex();
-  if (!index) return [];
-
-  const ringOf = (idx: number): number => Math.floor(idx / ring);
-  const triColor = (a: number, b: number, c: number): string => {
-    // Both triangles of a quad span [near, near+1]; band by the quad midpoint so
-    // the boundary lands on a ring rather than slicing through the quad.
-    const near = Math.min(ringOf(a), ringOf(b), ringOf(c));
-    const sMeters = (near + 0.5) * ringSpacing;
-    const n = colors.length;
-    return colors[((Math.floor(sMeters / candy.bandLengthM) % n) + n) % n];
-  };
-
-  const buckets = new Map<string, { p: number[]; n: number[] }>();
-  const arr = index.array;
-  for (let t = 0; t < arr.length; t += 3) {
-    const tri = [arr[t], arr[t + 1], arr[t + 2]];
-    const color = triColor(tri[0], tri[1], tri[2]);
-    let bucket = buckets.get(color);
-    if (!bucket) {
-      bucket = { p: [], n: [] };
-      buckets.set(color, bucket);
-    }
-    for (const idx of tri) {
-      bucket.p.push(pos.getX(idx), pos.getY(idx), pos.getZ(idx));
-      bucket.n.push(nor.getX(idx), nor.getY(idx), nor.getZ(idx));
-    }
-  }
-
-  const out: Array<[string, THREE.BufferGeometry]> = [];
-  for (const [color, { p, n }] of buckets) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.Float32BufferAttribute(p, 3));
-    g.setAttribute("normal", new THREE.Float32BufferAttribute(n, 3));
-    out.push([color, g]);
-  }
-  return out;
 }

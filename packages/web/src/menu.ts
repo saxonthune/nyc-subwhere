@@ -13,14 +13,32 @@ export class Menu extends LitElement {
   static properties = {
     options: { attribute: false },
     open: { attribute: false, type: Boolean },
+    nextUpdateAt: { attribute: false, type: Number },
   };
   declare options: MenuOption[];
   declare open: boolean;
+  /** Epoch ms of the next data poll; 0 until the first poll is scheduled. */
+  declare nextUpdateAt: number;
+
+  private tick?: ReturnType<typeof setInterval>;
 
   constructor() {
     super();
     this.options = [];
     this.open = false;
+    this.nextUpdateAt = 0;
+  }
+
+  // The countdown is derived from wall-clock, so re-render once a second rather
+  // than on a data change — nextUpdateAt only moves every ~30s.
+  connectedCallback() {
+    super.connectedCallback();
+    this.tick = setInterval(() => this.requestUpdate(), 1000);
+  }
+
+  disconnectedCallback() {
+    clearInterval(this.tick);
+    super.disconnectedCallback();
   }
 
   static styles = css`
@@ -70,10 +88,30 @@ export class Menu extends LitElement {
     .panel button:hover {
       background: rgba(255, 255, 255, 0.08);
     }
+    .bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .countdown {
+      color: #b8b8b8;
+      background: rgba(18, 18, 20, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
   `;
 
   private toggle() {
     this.open = !this.open;
+  }
+
+  private countdownLabel(): string {
+    if (!this.nextUpdateAt) return "next update: …";
+    const secs = Math.ceil((this.nextUpdateAt - Date.now()) / 1000);
+    return secs > 0 ? `next update: ${secs}s` : "updating…";
   }
 
   render() {
@@ -87,7 +125,10 @@ export class Menu extends LitElement {
           </div>`
           : nothing
       }
-      <button class="toggle" @click=${this.toggle}>Menu</button>
+      <div class="bar">
+        <button class="toggle" @click=${this.toggle}>Menu</button>
+        <span class="countdown">${this.countdownLabel()}</span>
+      </div>
     `;
   }
 }

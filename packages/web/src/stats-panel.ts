@@ -1,4 +1,5 @@
 import { LitElement, css, html, nothing } from "lit";
+import type { PredictionErrorRecord } from "./prediction-error";
 
 export interface DropTally {
   total: number;
@@ -13,14 +14,18 @@ export class StatsPanel extends LitElement {
   static properties = {
     open: { attribute: false, type: Boolean },
     tally: { attribute: false },
+    error: { attribute: false },
   };
   declare open: boolean;
   declare tally: DropTally | null;
+  /** Latest prediction-error record, refreshed once per poll. */
+  declare error: PredictionErrorRecord | null;
 
   constructor() {
     super();
     this.open = false;
     this.tally = null;
+    this.error = null;
   }
 
   static styles = css`
@@ -88,7 +93,12 @@ export class StatsPanel extends LitElement {
             ×
           </button>
         </header>
-        <pre class="body">${this.tally ? lines(this.tally) : "…"}</pre>
+        <pre class="body">${[
+          this.tally ? lines(this.tally) : "…",
+          errorLines(this.error),
+        ]
+          .filter(Boolean)
+          .join("\n\n")}</pre>
       </div>
     `;
   }
@@ -107,6 +117,23 @@ function lines(t: DropTally): string {
         return `${cause} ${routeId}: ${count}`;
       }),
   ].join("\n");
+}
+
+function errorLines(e: PredictionErrorRecord | null): string {
+  if (!e) return "";
+  const m = e.meters;
+  const worstRoute = Object.entries(e.byRoute).sort(
+    ([, a], [, b]) => b.mean - a.mean,
+  )[0];
+  return [
+    `— re-anchor jump (m), n=${e.counts.matched} —`,
+    `p50: ${m.p50}  p95: ${m.p95}  max: ${m.max}`,
+    `mean: ${m.mean}  bias: ${m.meanSigned >= 0 ? "+" : ""}${m.meanSigned}`,
+    worstRoute ? `worst route: ${worstRoute[0]} (${worstRoute[1].mean})` : "",
+    `switched: ${e.counts.lineSwitched}  in/out: ${e.counts.appeared}/${e.counts.disappeared}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 customElements.define("stats-panel", StatsPanel);

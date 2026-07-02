@@ -73,11 +73,19 @@ export type TripResolution =
   | { ok: true; pose: TrainPose }
   | { ok: false; cause: DropCause; routeId: string };
 
-export function resolveTrip(
+// The trip's Position Estimate as a scalar distance along its Track, plus the
+// Track itself. resolveTrip reads a point off this for rendering; the
+// prediction-error metric compares two of these (same trip, two snapshots,
+// one time) as a signed meters-along-track jump.
+export type DistResolution =
+  | { ok: true; track: Track; dist: number }
+  | { ok: false; cause: DropCause; routeId: string };
+
+export function resolveDist(
   trip: TripState,
   tracks: Map<string, Track>,
   nowMs: number,
-): TripResolution {
+): DistResolution {
   const track = tracks.get(
     trackKey(bakedRouteId(trip.routeId), trip.direction),
   );
@@ -101,13 +109,22 @@ export function resolveTrip(
     if (d != null) kf.push({ dist: d, t: u.arrival });
   }
 
-  const dist = distAt(kf, nowMs);
+  return { ok: true, track, dist: distAt(kf, nowMs) };
+}
+
+export function resolveTrip(
+  trip: TripState,
+  tracks: Map<string, Track>,
+  nowMs: number,
+): TripResolution {
+  const r = resolveDist(trip, tracks, nowMs);
+  if (!r.ok) return r;
   return {
     ok: true,
     pose: {
       tripId: trip.tripId,
       color: colorFor(trip.routeId),
-      ...pointAt(track, dist),
+      ...pointAt(r.track, r.dist),
     },
   };
 }

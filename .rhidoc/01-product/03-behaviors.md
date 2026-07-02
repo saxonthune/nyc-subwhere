@@ -1,6 +1,6 @@
 ---
 title: Behaviors
-summary: EARS behavioral intent for the Board — render live trips, glide between polls, ride track by stops (off-route reroutes), blink when position is uncertain, reveal directional tracks on zoom, stripe shared track, render the network with depth (tubes, pucks, platform boxes), seat it on grey extruded borough land over a dark-navy water disc that fades into the backdrop, tap to inspect
+summary: EARS behavioral intent for the Board — render live trips, glide between polls, ride track by stops (off-route reroutes), blink when position is uncertain, reveal directional tracks on zoom, give every route on shared track representation, render the network with depth (raised track, pucks, platform boxes), seat it on grey extruded borough land over a dark-navy water disc that fades into the backdrop, tap to inspect
 tags: [product, behaviors, ears, rendering, interaction]
 deps: [doc01.01, doc02.01, doc02.03, doc02.05]
 ---
@@ -97,29 +97,26 @@ view stays clean and the street view stays informative.
 - While the map is zoomed in past a legibility threshold, the Board shall separate a
   corridor's two directions into parallel tracks, so a rider can read delays in one
   direction independently of the other.
-- Where a stretch of track is shared by more than one Route, the Board shall stripe it in
-  the sharing Routes' colors at every zoom level, so no single Route's color hides the
-  others.
-- Where the Board stripes a shared stretch, it shall make every color band the same
-  length along the track, uniform across the whole map regardless of a corridor's shape
-  or how densely its geometry is sampled, so the stripe reads as one consistent pattern
-  rather than stretching and bunching from segment to segment.
+- Where a stretch of track is shared by more than one Route, the Board shall give every
+  sharing Route's color representation along that stretch at every zoom level, so no single
+  Route's color hides the others.
 
 ## Depth
 
-The network is drawn with real 3D form rather than flat overlays (doc02.03): Route lines
-are volumetric tubes, and each Station is a puck sitting above a platform box. Zooming in
-trades the puck's map-marker role for an unobstructed look at the track passing over the
-platform.
+The network is drawn with real 3D form rather than flat overlays (doc02.03): each Route's
+track is raised from the ground, and each Station is a puck sitting above a platform box.
+Zooming in trades the puck's map-marker role for an unobstructed look at the track passing
+over the platform.
 
-- The Board shall render each Route line as a 3D tube.
+- The Board shall draw each Route's track.
+- The Board shall render each Route's track with 3D relief, raised from the ground rather
+  than drawn as a flat overlay.
 - The Board shall render each Station as a 3D puck above a platform box.
-- The Board shall seat each Station's puck just above the Route tubes — its top clearing
-  the top of the tube — so that when zoomed out it reads as a point marking the Station on
-  the line.
+- The Board shall seat each Station's puck just above the track — its top clearing the top
+  of the track — so that when zoomed out it reads as a point marking the Station on the line.
 - The Board shall orient each Station's platform box parallel to the track passing through it.
 - While the map is zoomed in past a threshold, the Board shall fade the Station puck toward
-  transparent, so that at close zoom the tubes pass over the platform box with no puck
+  transparent, so that at close zoom the track passes over the platform box with no puck
   occluding them.
 
 ## Basemap

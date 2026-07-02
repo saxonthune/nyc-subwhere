@@ -82,29 +82,44 @@ export const NETWORK_STYLE = {
     minZoom: 15,
   },
 
-  // 3D route tubes (doc02.03). Radius/segments in meters; the tube centerline
-  // rides at y=radius so its underside sits on the ground plane, above the
-  // platform boxes. emissive carries the tron glow (colored per Route).
-  tube: {
-    radius: 11,
-    radialSegments: 6,
-    emissiveIntensity: 0.5,
-    // Every tube shifts this many meters to the left of its own travel direction.
-    // N and S shapes run antiparallel along the same alignment, so an equal shift
-    // pushes them to opposite sides — parallel tracks (doc01.03) instead of two
-    // tubes fighting on one centerline. ~radius apart leaves a clean gap.
-    sideOffsetM: 13,
-    // Tube tessellation: one ring every this many meters of arc length, so every
-    // tube (short or long, straight or curvy) has the same ring density. Banding
-    // is expressed in meters, but uniform rings keep the slanted cut smooth and
-    // keep band boundaries from quantizing coarsely on long segments.
-    ringLengthM: 8,
-    // Candy-cane banding for multi-color trunks: each color paints one
-    // arc-length band along the tube, cycling through the trunk's colors. Band
-    // length is in meters, so a chunk is the same size across the whole map. Cuts
-    // are flat rings perpendicular to the tube (assigned per quad, doc02.03).
-    candy: {
-      bandLengthM: 45,
+  // 3D route track (doc02.03), one wide flat ribbon built by the swappable
+  // TrackRenderer (track-render.ts). All meters. A corridor's two directions each
+  // draw as a half-ribbon offset to its own left, tiling one floor `halfWidth` from
+  // the center on each side, at height `surfaceY`. `medianGap` is a thin seam kept
+  // clear at the centerline. A grey wall of `wallThickness`×`wallHeight` stands on
+  // each outer edge only (none down the median), with a wing flanging `wingWidth`
+  // out past it at `wingY`. Expect these to change often as the look is tuned.
+  track: {
+    halfWidth: 26,
+    medianGap: 0,
+    surfaceY: 2,
+    wallHeight: 8,
+    wallThickness: 2,
+    wingWidth: 3,
+    wingY: 2,
+    greyColor: "#9098a0",
+    // Live trains ride this far to the left of travel — the center of their own
+    // direction's half-ribbon (roughly halfWidth/2), so a train sits on its track.
+    trainOffsetM: 13,
+    // Caret marks on the floor (doc01.03): the ribbon is partitioned into chevron
+    // cells by one bent coordinate `g = along + |across|·tan(bendDeg)`; each cell is
+    // one palette color and the black caret line sits exactly on the cell boundary,
+    // so color and mark are registered by construction. spacingM: base along-track
+    // cell period; bendDeg: arm angle up from the cross-track line; lineM: caret line
+    // half-width (meters).
+    //
+    // LOD (doc01.03), to keep the pattern legible across zoom rather than aliasing
+    // when small: minCellPx floors the cell period at this many screen pixels when
+    // zoomed out (bands coarsen but never fall sub-pixel and shimmer, and a shared
+    // trunk still shows every color); carets fade from absent below fadeStartZoom to
+    // full at fadeEndZoom, so far out the floor reads as clean color stripes.
+    chevron: {
+      spacingM: 16,
+      bendDeg: 30,
+      lineM: 1.4,
+      minCellPx: 8,
+      fadeStartZoom: 13,
+      fadeEndZoom: 14.5,
     },
   },
 

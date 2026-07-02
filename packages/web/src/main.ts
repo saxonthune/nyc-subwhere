@@ -12,11 +12,13 @@ import stationsUrl from "./assets/stations.geojson?url";
 import trackIndexUrl from "./assets/track-index.json?url";
 import { InspectorPanel, type InspectorTarget } from "./inspector-panel";
 import { Menu } from "./menu";
+import { logPredictionError } from "./metrics";
 import {
   type BoroughPolygon,
   NetworkLayer,
   type PickResult,
 } from "./network-layer";
+import { predictionErrors } from "./prediction-error";
 import { StatsPanel } from "./stats-panel";
 import { type TrainPose, indexTracks, resolveTrip } from "./trains";
 
@@ -160,6 +162,8 @@ map.on("load", async () => {
     inspector.target = r ? toTarget(r) : null;
   });
 
+  const POLL_MS = 30_000;
+
   const poll = async () => {
     try {
       const res = await fetch("/api/trips");
@@ -167,10 +171,20 @@ map.on("load", async () => {
         console.warn(`/api/trips -> ${res.status}`);
         return;
       }
-      snapshot = (await res.json()) as RenderSnapshot;
+      const next = (await res.json()) as RenderSnapshot;
+      // The jump each train makes here is the prior frame's prediction error;
+      // measure it against the previous snapshot before overwriting (doc02.04).
+      if (snapshot) {
+        const rec = predictionErrors(snapshot, next, tracks);
+        logPredictionError(rec);
+        statsPanel.error = rec;
+      }
+      snapshot = next;
       clockSkew = snapshot.asOf - Date.now();
     } catch (err) {
       console.warn("trip poll failed", err);
+    } finally {
+      menu.nextUpdateAt = Date.now() + POLL_MS;
     }
   };
 
@@ -201,6 +215,6 @@ map.on("load", async () => {
   };
 
   await poll();
-  setInterval(poll, 30_000);
+  setInterval(poll, POLL_MS);
   requestAnimationFrame(frame);
 });
