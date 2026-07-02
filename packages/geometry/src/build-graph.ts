@@ -50,7 +50,7 @@ interface Seg {
 export function buildGraph(
   segments: SegmentCollection,
   merges: TrackMerge[],
-): Omit<TrackGraph, "merges"> {
+): Omit<TrackGraph, "merges" | "silhouette"> {
   const segs: Seg[] = segments.features.map((f, i) => {
     const ll = f.geometry.coordinates;
     const m = ll.map(projectNyc);
@@ -91,7 +91,11 @@ export function buildGraph(
     liftOverProfile(segs[c.over], projectNyc(c.point), elevation[c.over]);
   }
   for (const mg of merges) {
-    liftMergeBranch(segs[mg.branch], projectNyc(mg.attach), elevation[mg.branch]);
+    liftMergeBranch(
+      segs[mg.branch],
+      projectNyc(mg.attach),
+      elevation[mg.branch],
+    );
   }
 
   const partner = pairCorridors(segs, segments);

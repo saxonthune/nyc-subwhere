@@ -152,13 +152,17 @@ export function buildSnapshot(
       lastKnownStop = { stopId: front, at: nowMs };
       upcoming = frontIdx >= 0 ? arrivals.slice(frontIdx + 1) : arrivals;
     } else if (mem.departedStopId != null && mem.departedAt != null) {
-      // Approaching the front from a known departed stop: dead-reckon the
-      // committed segment (departed -> front at the frozen arrival), then hand
-      // the live predictions beyond it as runway.
+      // Approaching the front from a known departed stop: dead-reckon the segment
+      // (departed -> front), then hand the live predictions beyond it as runway.
+      // The arrival to front is sent FRESH each poll, not frozen at departure: the
+      // client TripEstimator (doc02.06) now re-bases from the position already
+      // shown, so a revised ETA only bends the remaining slope, it no longer snaps
+      // position — which is what freezing existed to prevent. `committedArrival`
+      // stays frozen, but only as the yardstick for the stall check below.
       lastKnownStop = { stopId: mem.departedStopId, at: mem.departedAt };
       const committed: StopArrival = {
         stopId: front,
-        arrival: mem.committedArrival ?? arrivalOfFront,
+        arrival: arrivalOfFront,
         departure: frontIdx >= 0 ? arrivals[frontIdx].departure : null,
       };
       const beyond = frontIdx >= 0 ? arrivals.slice(frontIdx + 1) : [];

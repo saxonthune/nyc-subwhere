@@ -146,6 +146,11 @@ export interface TrackGraph {
   // full-width track ribbon so there is no centerline seam. Parallel to features.
   partner: number[];
   merges: TrackMerge[];
+  // The dissolved network outline (doc02.07): every Segment centerline buffered by the
+  // half-ribbon width and boolean-unioned, so merges/branches tile with no seam. Each
+  // entry is one polygon as [outerRing, ...holeRings]; the renderer extrudes each ring
+  // into a platform edge. Built in projected meters, stored as LngLat.
+  silhouette: LngLat[][][];
 }
 
 // --- Linear-reference index (motion) ------------------------------------

@@ -17,9 +17,9 @@ import { parse } from "csv-parse";
 import { parse as parseSync } from "csv-parse/sync";
 import { buildGraph } from "./build-graph";
 import { buildSegments } from "./build-segments";
+import { buildSilhouette } from "./build-silhouette";
 import { buildStations } from "./build-stations";
 import { buildTracks } from "./build-tracks";
-import { conformMerges } from "./conform-merges";
 import { type Row, normalize } from "./gtfs-normalize";
 import { locateStops } from "./locate-stops";
 import { selectCanonical } from "./select-canonical";
@@ -116,12 +116,16 @@ async function main(): Promise<void> {
     mergeReport,
     preMerge,
   } = buildSegments(located, normalized);
-  // Reshape branch tails onto the trunks they join before anything downstream reads
-  // the geometry, so crossings, elevation, and picking all see the conformed shape.
-  const { conformed: conformedMerges, merges } = conformMerges(segments);
+  // Junction tessellation (doc02.07): merges/branches are dissolved by the silhouette
+  // union, not by reshaping branch tails, so segment geometry is left as-is. `merges`
+  // stays empty (the union supersedes per-branch conforming).
   const tracks = buildTracks(located, feedVersion);
   const stations = buildStations(canonical, normalized);
-  const graph = { ...buildGraph(segments, merges), merges };
+  const graph = {
+    ...buildGraph(segments, []),
+    merges: [],
+    silhouette: buildSilhouette(segments),
+  };
 
   // Selected canonical shapes as inspectable LineStrings (routes/direction/
   // colors so `inspect` reads them; shapeId/stops for coverage questions).
@@ -164,8 +168,8 @@ async function main(): Promise<void> {
 
   console.log(
     `geometry: ${stations.features.length} stations, ${segments.features.length} segments ` +
-      `(${mergeReport.mergedGroups} corridor-merged groups, ${conformedMerges} branch tails conformed), ` +
-      `${graph.crossings.length} crossings, ` +
+      `(${mergeReport.mergedGroups} corridor-merged groups), ` +
+      `${graph.crossings.length} crossings, ${graph.silhouette.length} silhouette polygons, ` +
       `${tracks.tracks.length} tracks (feed ${feedVersion ?? "unknown"}) -> ${path.relative(REPO_ROOT, OUT_DIR)}`,
   );
 }

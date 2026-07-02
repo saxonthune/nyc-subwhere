@@ -29,19 +29,72 @@ export const NETWORK_STYLE = {
   // water is a single plane seated below that top so the boroughs poke above it and
   // everything outside them reads as water.
   land: {
-    color: "#454b52",
-    height: 40,
+    // Darkened for the Tron base: land reads as a near-black grey plate that the
+    // lighting system lifts with a faint cool self-glow (see lighting.land), rather
+    // than a flat bright slab washed out by ambient. height sets the cliff depth —
+    // with water dropped to lighting.water.level, the exposed face reads tall.
+    color: "#2b3138",
+    height: 44,
   },
   water: {
-    color: "#0a1a35",
-    // Below the land's top face (y=0) but above its base (-height), so land stands
-    // out of the water at a shoreline.
-    level: -8,
-    // A disc rather than a square: its solid navy core spans well past the five
-    // boroughs, then a radial gradient fades it to transparent by the rim so the
-    // water dissolves into the black background with no hard edge. Meters.
+    // The near-shore blue. Kept dark enough to stay under the bloom threshold, so
+    // water never glows — it only shows as blue hugging the coast (see makeWaterTexture
+    // / lighting.water) and drops to black in the open ocean, reading as an abyss.
+    color: "#1a4e93",
+    // Dropped well below the land's top face (y=0) so the shoreline is a tall cliff
+    // and the water sits far below like an abyss. Still above the land's base
+    // (-height) so the land stays rooted in the water rather than floating.
+    level: -24,
+    // The water disc's radius (meters); large enough to reach past every borough.
     radius: 70_000,
-    coreFraction: 0.5,
+    // Shoreline-relative blue (lighting.ts): the blue is keyed to distance from the
+    // nearest coast, not the map origin. Water shows blue within `shoreFalloffM` of
+    // land and fades to the black background beyond, so the blue hugs every shore and
+    // the open ocean reads as an abyss. `shoreIntensity` scales the peak opacity at
+    // the waterline; `shoreRes` is the distance-field texture resolution on its long
+    // axis (higher = crisper coastline, slower one-time bake at load).
+    shoreFalloffM: 2600,
+    shoreIntensity: 1.7,
+    shoreRes: 1024,
+  },
+
+  // ECS-style lighting (lighting.ts): one system owns "how brightly does each role
+  // glow" so the concern lives in one place instead of scattered emissive settings.
+  // The scene bloom is a single luminance-threshold pass over the whole scene, so the
+  // glow tiers fall out of relative brightness: trains (fully self-lit) bloom hardest,
+  // track carets and station pucks bloom some, the dim land barely, and the dark water
+  // not at all. ambient/key are kept low so the black Tron base stays dark.
+  lighting: {
+    ambient: 0.28,
+    key: 0.45,
+    keyDir: [0.5, 1, 0.3] as [number, number, number],
+    // Faint cool self-glow on the land so its cliff faces aren't pure black in shade
+    // and the plate reads as softly lit from within — a "low glow", below the trains
+    // and track.
+    land: {
+      emissive: "#16222e",
+      emissiveIntensity: 0.85,
+    },
+    // Station pucks as glowing white nodes: a near-white base with a white emissive so
+    // they read as bright lit points on the line and bloom a little — less than the
+    // trains, more than the land.
+    station: {
+      color: "#eef3f8",
+      emissive: "#ffffff",
+      emissiveIntensity: 1.1,
+    },
+    // Scene bloom (post-process, train-glow.ts BloomGlow). source "scene" blooms the
+    // whole scene by luminance so every role tiers naturally; "trains" restricts the
+    // bloom source to the train boxes (the older trains-only glow). threshold is the
+    // luminance a pixel must clear to bloom — kept low so most route colors glow, but
+    // above the dark water and near the dim land so those stay quiet.
+    bloom: {
+      source: "scene" as "scene" | "trains",
+      threshold: 0.12,
+      intensity: 1.0,
+      radius: 1.5,
+      iterations: 4,
+    },
   },
 
   station: {
@@ -61,9 +114,8 @@ export const NETWORK_STYLE = {
     // top only just above the tube top (2·tube.radius), so it reads as a point
     // on the line, not a pillar.
     height: 4,
-    color: "#ffffff",
-    emissive: "#88aaff",
-    emissiveIntensity: 0.6,
+    // The puck's color/emissive glow is owned by the lighting system
+    // (lighting.station); this block keeps only its geometry and zoom behavior.
     // Semantic-zoom fade (doc01.03): fully opaque at/below fadeStartZoom, fully
     // gone at/above fadeEndZoom, so close in the tubes pass over the platform box
     // with no puck occluding them.
@@ -78,7 +130,8 @@ export const NETWORK_STYLE = {
     length: 90,
     width: 46,
     depth: 30,
-    color: "#3a3a3a",
+    // Dark plinth: it sits below the network and should recede, not bloom.
+    color: "#20242a",
     minZoom: 15,
   },
 
@@ -92,15 +145,26 @@ export const NETWORK_STYLE = {
   track: {
     halfWidth: 26,
     medianGap: 0,
-    surfaceY: 2,
-    wallHeight: 8,
-    wallThickness: 2,
+    surfaceY: 6,
+    wallHeight: 6,
+    wallThickness: 1.2,
     wingWidth: 3,
     wingY: 2,
-    greyColor: "#9098a0",
+    // Edge light-rail (doc02.05): the floor boundary is extruded into a thin neon
+    // piping rather than a grey retaining wall — an emissive strip that blooms under
+    // the scene pass, so the ribbon reads as a lit Tron ribbon outlined in light.
+    // `edgeColor` is the piping color; `edgeEmissiveIntensity` scales its self-glow
+    // (above the bloom threshold so it always glows). Kept a cool near-white so it
+    // frames every route color without competing with the floor palette.
+    edgeColor: "#dfefff",
+    edgeEmissiveIntensity: 1.2,
     // Live trains ride this far to the left of travel — the center of their own
     // direction's half-ribbon (roughly halfWidth/2), so a train sits on its track.
     trainOffsetM: 13,
+    // Merge protrusion (doc02.05): after a branch is conformed onto its trunk it is
+    // extended to run along the trunk this far, so the junction reads as the branch
+    // joining and running parallel rather than crossing and stopping.
+    mergeProtrudeM: 35,
     // Caret marks on the floor (doc01.03): the ribbon is partitioned into chevron
     // cells by one bent coordinate `g = along + |across|·tan(bendDeg)`; each cell is
     // one palette color and the black caret line sits exactly on the cell boundary,
@@ -145,24 +209,13 @@ export const NETWORK_STYLE = {
     //   "halo"      — the sprite behind the box, so only a backlit rim shows.
     //   "none"      — no glow.
     // scaleLength/scaleCross/opacity size the billboard/halo sprite (multiples of
-    // train length); bloom.* tune the post-process pass.
+    // train length). The post-process bloom pass is tuned in lighting.bloom, since it
+    // now blooms the whole scene, not just the trains.
     glow: {
       mode: "bloom" as "bloom" | "billboard" | "halo" | "none",
       scaleLength: 1.5,
       scaleCross: 0.6,
       opacity: 0.75,
-      bloom: {
-        // Luminance above which a pixel blooms. The bloom source is trains-only,
-        // so this only needs to drop the black background; keep it low so every
-        // Route color (even the darker reds/greens) blooms.
-        threshold: 0.1,
-        // Additive strength of the composited bloom.
-        intensity: 1.2,
-        // Blur step in half-res texels per tap; larger = wider, softer halo.
-        radius: 1.5,
-        // Horizontal+vertical blur passes; more = smoother, wider bloom.
-        iterations: 4,
-      },
     },
   },
 };

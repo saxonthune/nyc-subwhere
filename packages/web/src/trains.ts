@@ -1,8 +1,9 @@
-// Live-train motion (doc02.04): turn each Trip's render frame into a drawable
-// pose by interpolating along its baked Track. The worker ships lastKnownStop +
-// upcoming keyframes; here we lerp a Position Estimate by wall-clock time between
-// stops and read a point + travel bearing off the Track's polyline. Pure — the
-// layer owns the meshes, main.ts owns the poll clock (doc01.03).
+// Live-train motion (doc02.04, doc02.06): place each Trip along its baked Track by
+// wall-clock time. Two paths share the geometry: `resolveDist`/`resolveTrip` give a
+// stateless one-frame Position Estimate (used by the prediction-error metric and
+// the inspector), while the stateful `TripEstimator` is what the Board renders —
+// it folds each snapshot into the position already shown so ETA jitter can't snap a
+// train backward. The layer owns the meshes; main.ts owns the poll clock (doc01.03).
 
 import type {
   LngLat,
@@ -79,11 +80,15 @@ export function indexTracks(index: TrackIndex): Map<string, Track> {
 // Roughly a train length, so the gap reads as "approaching", not "arrived".
 const STATION_HOLD_MARGIN_M = 25;
 
-// Sane band for demonstrated-speed pacing (doc02.06), metres per second. The floor
-// keeps one noisy segment from stalling a moving train into an endless crawl; the
-// ceiling guards against a slingshot from a bad pass-time. NYCT tops out ~24 m/s.
-const MIN_PACE_MPS = 1.5;
-const MAX_PACE_MPS = 35;
+// Pacing note (doc02.06): a "pace lead" — reaching the hold-short cap before the
+// feed's predicted arrival to close the ~130m systematic behind-ness at real passes
+// — was measured at 7% and 15% and reverted. Leading reliably ~doubled pure-slope
+// speed jitter (trains pile up at the cap and stop abruptly), while its supposed
+// position benefit was confounded by time-of-day delay variation across the
+// sequential collection windows and never cleanly confirmed. The behind-ness is
+// benign (invisible at jump p50=0), so the honest render glides straight to the feed
+// arrival with no lead. A valid re-test would need both policies scored on the SAME
+// polls (a shadow estimate), not consecutive windows.
 
 export type DropCause = "noTrack" | "noStop";
 export type TripResolution =
@@ -220,9 +225,8 @@ interface Basis {
   toT: number;
   hasNext: boolean;
   stalled: boolean;
-  obsDist: number; // last observed station distance, for demonstrated speed
+  obsDist: number; // last observed station distance, to detect the next pass
   obsT: number; // and its observed departure time
-  vObs: number | null; // smoothed demonstrated speed (m/s), null until one segment seen
 }
 
 // Where the estimate places a train at `nowMs`: glide fromDist -> toDist (the
@@ -234,6 +238,35 @@ function basisPos(b: Basis, nowMs: number): number {
   return b.fromDist + (b.toDist - b.fromDist) * f;
 }
 
+// The constant glide speed of a basis, m/s, or null if it has no forward runway
+// left (holding). Distances are metres, times epoch ms.
+function glideSpeed(
+  fromDist: number,
+  toDist: number,
+  fromT: number,
+  toT: number,
+) {
+  return toT > fromT ? (toDist - fromDist) / ((toT - fromT) / 1000) : null;
+}
+
+// The step in glide speed from the previous basis to the one being set now, m/s;
+// null if either basis is holding (no defined speed). This is the perceived lurch
+// at a re-base even though position itself is continuous.
+function speedDelta(
+  prev: Basis,
+  newFromDist: number,
+  nowMs: number,
+  seg: Segment,
+): number | null {
+  const prevV = prev.hasNext
+    ? glideSpeed(prev.fromDist, prev.toDist, prev.fromT, prev.toT)
+    : null;
+  const newV = seg.hasNext
+    ? glideSpeed(newFromDist, seg.cap, nowMs, seg.toT)
+    : null;
+  return prevV != null && newV != null ? newV - prevV : null;
+}
+
 // One Trip's reconciliation at a poll (doc02.06): how the estimate compared to the
 // fresh frame, and how far it visibly moved when re-based. Signs — `drift` positive
 // means the estimate had run AHEAD of the freshly-observed position (reality);
@@ -243,6 +276,18 @@ export interface ReconcileTrip {
   routeId: string;
   drift: number; // shown − fresh: the estimate's error vs reality, meters
   jump: number; // rebased − shown: the visible teleport at re-base, meters
+  // Ground-truth over-glide: only when this poll OBSERVED the train pass a new
+  // station. Where the estimate had rendered it at that observed pass time, minus
+  // the station it was actually at. Positive = we had already glided it past the
+  // station before the feed confirmed arrival (real over-glide / honesty risk).
+  // Unlike `drift`, this is anchored on a hard observation, not the feed's own
+  // (optimistic) extrapolation. null when no pass was observed this poll.
+  passOverglide: number | null;
+  // Change in the estimator's rendered glide speed at this re-base, m/s. Position
+  // is continuous across a re-base, but the *slope* can step; this is the speed
+  // discontinuity the rider perceives as a lurch. null if either basis had no
+  // resolvable pace. Small = smooth motion; large = jerky even without a jump.
+  speedDelta: number | null;
 }
 
 // Per-poll estimator report, logged alongside the prediction-error metric. `drift`
@@ -255,6 +300,8 @@ export interface EstimatorReport {
   asOf: number;
   matched: number;
   appeared: number;
+  live: number; // trips the estimator is currently rendering
+  blinking: number; // of those, how many are held/uncertain (would blink) at poll time
   drift: { mean: number; p50: number; p95: number; signed: number };
   jump: {
     mean: number;
@@ -264,6 +311,12 @@ export interface EstimatorReport {
     signed: number;
     moved: number; // trips whose render teleported more than a meter
   };
+  // Speed discontinuity at re-base (see ReconcileTrip.speedDelta), m/s — the
+  // perceived lurch even when position is continuous.
+  speed: { n: number; p50: number; p95: number; mean: number };
+  // Over-glide against hard observations (see ReconcileTrip.passOverglide), only
+  // over the trips that were observed passing a station this poll.
+  truth: { n: number; p50: number; p95: number; signed: number };
   trips: ReconcileTrip[];
 }
 
@@ -282,10 +335,6 @@ export class TripEstimator {
   private readonly bases = new Map<string, Basis>();
   // "cause:routeId" -> count, from the last ingest, for the Advanced Stats tally.
   readonly drops = new Map<string, number>();
-
-  get count(): number {
-    return this.bases.size;
-  }
 
   ingest(
     snapshot: RenderSnapshot,
@@ -316,41 +365,32 @@ export class TripEstimator {
       // past the hold-short cap. This is exactly what the train renders at right
       // after the re-base, so its gap from `shown` is the visible jump.
       const fromDist = Math.min(Math.max(shown, seg.fromDist), seg.cap);
+
+      // When the observed station advanced since we last saw this Trip, that
+      // advance is a hard observation to score the estimate against
+      // (passOverglide): where we had rendered the train at the observed pass
+      // time, minus where it actually was. Positive = we had glided it past the
+      // station before the feed confirmed arrival.
+      let passOverglide: number | null = null;
       if (reconciled) {
+        const p = prev as Basis;
+        if (seg.fromDist > p.obsDist && seg.fromT > p.obsT) {
+          passOverglide = basisPos(p, seg.fromT) - seg.fromDist;
+        }
+      }
+
+      if (reconciled) {
+        const p = prev as Basis;
         recon.push({
           tripId: trip.tripId,
           routeId: trip.routeId,
           drift: shown - fresh,
           jump: fromDist - shown,
+          passOverglide,
+          speedDelta: speedDelta(p, fromDist, nowMs, seg),
         });
       } else {
         appeared++;
-      }
-
-      // Demonstrated speed: when the observed station advanced since we last saw
-      // this Trip, the distance/time between the two observed passes is a real
-      // segment speed. Smooth it lightly and carry it while the Trip sits within a
-      // segment (no fresh pass to update it).
-      let vObs = reconciled ? (prev as Basis).vObs : null;
-      if (reconciled) {
-        const p = prev as Basis;
-        if (seg.fromDist > p.obsDist && seg.fromT > p.obsT) {
-          const v = (seg.fromDist - p.obsDist) / ((seg.fromT - p.obsT) / 1000);
-          vObs = p.vObs != null ? 0.5 * p.vObs + 0.5 * v : v;
-        }
-      }
-
-      // Pace at min(feed speed, demonstrated speed) for the remaining glide to the
-      // cap (doc02.06). A slower speed is a later arrival, so this is `toT =
-      // max(feed ETA, dead-reckon-at-vObs arrival)`: keep the feed's pace by
-      // default, slow down only when the train is visibly running slower than the
-      // feed expects, and never glide faster than the feed. `vObs` is floored/
-      // capped to a sane band so one noisy segment can't stall or slingshot it.
-      let toT = seg.toT;
-      const remaining = seg.cap - fromDist;
-      if (seg.hasNext && remaining > 0 && vObs != null && vObs > 0) {
-        const pace = Math.min(MAX_PACE_MPS, Math.max(MIN_PACE_MPS, vObs));
-        toT = Math.max(toT, nowMs + (remaining / pace) * 1000);
       }
 
       this.bases.set(trip.tripId, {
@@ -360,18 +400,24 @@ export class TripEstimator {
         fromDist,
         fromT: nowMs,
         toDist: seg.cap,
-        toT,
+        toT: seg.toT, // glide to the hold-short cap by the feed's predicted arrival
         hasNext: seg.hasNext,
         stalled: trip.status === "stalled",
         obsDist: seg.fromDist,
         obsT: seg.fromT,
-        vObs,
       });
     }
     for (const id of [...this.bases.keys()]) {
       if (!live.has(id)) this.bases.delete(id);
     }
-    return estimatorReport(nowMs, recon, appeared);
+    // Blink/hold pressure at poll time: a train whose next-station arrival is
+    // already at/behind now is being held short and blinking. Metering this is the
+    // "cost" side of any future pace-lead that would trade behind-ness for blink.
+    let blinking = 0;
+    for (const b of this.bases.values()) {
+      if (b.stalled || !b.hasNext || nowMs > b.toT) blinking++;
+    }
+    return estimatorReport(nowMs, recon, appeared, this.bases.size, blinking);
   }
 
   poses(nowMs: number): TrainPose[] {
@@ -403,13 +449,37 @@ function estimatorReport(
   asOf: number,
   recon: ReconcileTrip[],
   appeared: number,
+  live: number,
+  blinking: number,
 ): EstimatorReport {
   const driftAbs = recon.map((r) => Math.abs(r.drift));
   const jumpAbs = recon.map((r) => Math.abs(r.jump));
+  const passes = recon
+    .map((r) => r.passOverglide)
+    .filter((p): p is number => p != null);
+  const passAbs = passes.map(Math.abs);
+  const speeds = recon
+    .map((r) => r.speedDelta)
+    .filter((s): s is number => s != null)
+    .map(Math.abs);
   return {
     asOf,
     matched: recon.length,
     appeared,
+    live,
+    blinking,
+    speed: {
+      n: speeds.length,
+      p50: pctl(speeds, 0.5),
+      p95: pctl(speeds, 0.95),
+      mean: avg(speeds),
+    },
+    truth: {
+      n: passes.length,
+      p50: pctl(passAbs, 0.5),
+      p95: pctl(passAbs, 0.95),
+      signed: avg(passes),
+    },
     drift: {
       mean: avg(driftAbs),
       p50: pctl(driftAbs, 0.5),

@@ -237,7 +237,7 @@ class BloomGlow implements GlowEffect {
     renderTrains();
 
     const { threshold, intensity, radius, iterations } =
-      NETWORK_STYLE.train.glow.bloom;
+      NETWORK_STYLE.lighting.bloom;
     this.bright.uniforms.tDiffuse.value = rtScene.texture;
     this.bright.uniforms.threshold.value = threshold;
     this.blit(this.bright, src);

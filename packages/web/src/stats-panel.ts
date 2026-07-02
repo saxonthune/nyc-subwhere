@@ -152,11 +152,17 @@ function lines(t: DropTally): string {
 function estimatorLines(e: EstimatorReport | null): string {
   if (!e) return "";
   const sign = (v: number) => (v >= 0 ? `+${v}` : `${v}`);
+  const honesty =
+    e.truth.n === 0
+      ? ""
+      : e.truth.signed < 0
+        ? "behind — honest"
+        : "PAST platform!";
   return [
-    `— estimator vs reality (m), n=${e.matched} —`,
-    `drift p50: ${e.drift.p50}  p95: ${e.drift.p95}  bias: ${sign(e.drift.signed)}`,
-    `visual jump p50: ${e.jump.p50}  p95: ${e.jump.p95}  max: ${e.jump.max}`,
-    `teleported: ${e.jump.moved}/${e.matched}  bias: ${sign(e.jump.signed)}`,
+    `— estimator (m), n=${e.matched} —`,
+    `vs feed (optimistic): p50 ${e.drift.p50}  bias ${sign(e.drift.signed)}`,
+    `vs OBSERVED pass: bias ${sign(e.truth.signed)} n=${e.truth.n} ${honesty}`,
+    `visual jump p50: ${e.jump.p50}  p95: ${e.jump.p95}  bias: ${sign(e.jump.signed)}`,
   ].join("\n");
 }
 

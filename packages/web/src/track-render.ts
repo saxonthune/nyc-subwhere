@@ -18,6 +18,9 @@ export type TrackGraph = {
   elevation: number[][];
   partner: number[];
   merges: TrackMerge[];
+  // The dissolved network outline (doc02.07): each polygon is [outerRing, ...holeRings]
+  // in LngLat. The renderer extrudes each ring down into a platform edge.
+  silhouette: LngLat[][][];
 };
 
 // What the layer lends a renderer: the meter-frame projection it already owns.
@@ -52,8 +55,7 @@ export type TrackBuild = {
 // The height of the highest part of the track (wall tops) — pucks and trains seat
 // above this so they read as sitting on top of the track.
 export function trackTopY(): number {
-  const { surfaceY, wallHeight } = NETWORK_STYLE.track;
-  return surfaceY + wallHeight;
+  return NETWORK_STYLE.track.surfaceY;
 }
 
 // A cross-section frame at a centerline vertex: its meter-frame center and the
@@ -67,8 +69,9 @@ type P2 = { x: number; z: number };
 // centerline seam to reason about — the median wall problem simply doesn't exist.
 //   floor  — one full-width caret ribbon (-halfWidth..+halfWidth) on the corridor
 //            centerline, lifted per-vertex by the baked crossing elevation. Where a
-//            branch merges into a trunk its floor is trimmed back to the trunk footprint
-//            so the two ribbons tile rather than overlap (the trunk owns the junction).
+//            branch merges into a trunk it is extended to run along the trunk (sampling
+//            the trunk centerline) and rides the baked merge-lift above it, so the merge
+//            reads as joining-and-running-parallel rather than crossing-and-stopping.
 //   walls  — the boundary of the assembled floor surface: each floor's outer rails are
 //            welded and a rail used by exactly one floor gets a curb, one shared by two
 //            (a tiled junction, or two coplanar floors) gets none. No thresholds — the
@@ -99,16 +102,15 @@ export class FlatTrackRenderer implements TrackRenderer {
     };
     const corridorOf = (si: number) => (owns(si) ? si : graph.partner[si]);
 
-    // Junction handling (doc02.05): a branch was conformed to run collinear with the
-    // trunk it joins and rides `mergeLift` above it (baked elevation), so the two ribbons
-    // may overlap without z-fighting. The branch is trimmed only where it lies deep over
-    // the trunk (within `mergeKeepM` of the trunk centerline), so it stays atop the trunk
-    // and covers the throat, but its far-inner tip — which would just be a raised wall
-    // stranded over the trunk center — is dropped. trimHead/trimTail count frames to drop.
-    const { halfWidth } = NETWORK_STYLE.track;
-    const mergeKeepM = halfWidth * 0.35;
-    const trimHead = new Array<number>(segments.length).fill(0);
-    const trimTail = new Array<number>(segments.length).fill(0);
+    // Junction protrusion (doc02.05): a branch was conformed only to *touch* its trunk
+    // tangentially and then stop, which reads as crossing-and-stopping. Extend it to RUN
+    // ALONG the trunk for `mergeProtrudeM` by sampling the trunk's own centerline forward
+    // from the join — parallel by construction, whatever the approach angle — riding the
+    // baked merge-lift above the trunk (so the overlap doesn't z-fight). Held as extra
+    // frames+lift to graft onto the branch's merge end (head or tail).
+    const mergeProtrudeM = NETWORK_STYLE.track.mergeProtrudeM;
+    const headExt = new Array<Extension | null>(segments.length).fill(null);
+    const tailExt = new Array<Extension | null>(segments.length).fill(null);
     for (const m of graph.merges) {
       const bc = corridorOf(m.branch);
       const tc = corridorOf(m.trunk);
@@ -120,30 +122,33 @@ export class FlatTrackRenderer implements TrackRenderer {
       const last = Bf.length - 1;
       const endIsLast =
         frameDistTo(Bf[last], a.x, a.z) < frameDistTo(Bf[0], a.x, a.z);
-      let count = 0;
-      const step = endIsLast ? -1 : 1;
-      for (let i = endIsLast ? last : 0; i >= 0 && i <= last; i += step) {
-        if (distToCenterline(Bf[i], tb.frames) > mergeKeepM) break;
-        count++;
-      }
-      const drop = Math.max(0, count - 1);
-      if (endIsLast) trimTail[bc] = Math.max(trimTail[bc], drop);
-      else trimHead[bc] = Math.max(trimHead[bc], drop);
+      const tip = endIsLast ? Bf[last] : Bf[0];
+      const prev = endIsLast ? Bf[last - 1] : Bf[1];
+      const fwd = { x: tip.cx - prev.cx, z: tip.cz - prev.cz };
+      const tipLift = endIsLast ? bb.lift[last] : bb.lift[0];
+      const ext = trunkProtrusion(tb.frames, a, fwd, mergeProtrudeM, tipLift);
+      if (ext.frames.length < 2) continue;
+      if (endIsLast) tailExt[bc] = ext;
+      else headExt[bc] = ext;
     }
 
     const floors: { geo: THREE.BufferGeometry; seg: number }[] = [];
     const rails: RailEdge[] = [];
     built.forEach((b, si) => {
       if (!b || !owns(si)) return;
-      let lo = trimHead[si];
-      let hi = b.frames.length - trimTail[si];
-      if (hi - lo < 2) {
-        // Trimming would erase the corridor — keep it whole rather than drop it.
-        lo = 0;
-        hi = b.frames.length;
+      let frames = b.frames;
+      let lift = b.lift;
+      const he = headExt[si];
+      const te = tailExt[si];
+      if (he) {
+        // head extension runs outward from the branch start; reverse so it leads into it.
+        frames = [...he.frames.slice().reverse(), ...frames];
+        lift = [...he.lift.slice().reverse(), ...lift];
       }
-      const frames = b.frames.slice(lo, hi);
-      const lift = b.lift.slice(lo, hi);
+      if (te) {
+        frames = [...frames, ...te.frames];
+        lift = [...lift, ...te.lift];
+      }
       const along = southOriginArcLength(frames);
       const f = buildFloor(frames, along, segments[si].colors, lift);
       floors.push({ geo: f.geo, seg: si });
@@ -249,13 +254,13 @@ function curbFromEdge(r: RailEdge, pos: number[], nor: number[]) {
     z: p.z + oz * t * s,
   });
   const aIn = off(a, -1, a.y);
-  const aInT = off(a, -1, a.y + wallHeight);
+  const aInT = off(a, -1, a.y - wallHeight);
   const aOut = off(a, 1, a.y);
-  const aOutT = off(a, 1, a.y + wallHeight);
+  const aOutT = off(a, 1, a.y - wallHeight);
   const bIn = off(b, -1, b.y);
-  const bInT = off(b, -1, b.y + wallHeight);
+  const bInT = off(b, -1, b.y - wallHeight);
   const bOut = off(b, 1, b.y);
-  const bOutT = off(b, 1, b.y + wallHeight);
+  const bOutT = off(b, 1, b.y - wallHeight);
   pushTri(pos, nor, aIn, bIn, aInT);
   pushTri(pos, nor, aInT, bIn, bInT);
   pushTri(pos, nor, aOut, aOutT, bOut);
@@ -355,24 +360,86 @@ function frameDistTo(f: Frame, x: number, z: number): number {
   return Math.hypot(f.cx - x, f.cz - z);
 }
 
-// Distance from a frame's center to a trunk centerline (its frame centers as a
-// polyline), for testing whether a branch frame lies within the trunk footprint.
-function distToCenterline(f: Frame, trunk: Frame[]): number {
-  let best = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < trunk.length - 1; i++) {
-    const ax = trunk[i].cx;
-    const az = trunk[i].cz;
-    const dx = trunk[i + 1].cx - ax;
-    const dz = trunk[i + 1].cz - az;
-    const l2 = dx * dx + dz * dz || 1;
-    let t = ((f.cx - ax) * dx + (f.cz - az) * dz) / l2;
-    t = Math.min(1, Math.max(0, t));
-    best = Math.min(
-      best,
-      Math.hypot(f.cx - (ax + t * dx), f.cz - (az + t * dz)),
+// Extra frames (with per-frame lift) grafted onto a branch's merge end so it runs along
+// the trunk rather than stopping at it.
+type Extension = { frames: Frame[]; lift: number[] };
+
+// Sample the trunk centerline forward from a branch's attach point for `protrudeM`, so
+// the branch can be extended to run collinear with — i.e. exactly parallel to — the
+// trunk regardless of how it approached. Frames take the trunk's center + normal, each
+// at the given lift (the branch rides above the trunk on the baked merge-lift).
+function trunkProtrusion(
+  trunk: Frame[],
+  attach: { x: number; z: number },
+  fwd: { x: number; z: number },
+  protrudeM: number,
+  lift: number,
+): Extension {
+  const cum = [0];
+  for (let i = 1; i < trunk.length; i++)
+    cum.push(
+      cum[i - 1] +
+        Math.hypot(
+          trunk[i].cx - trunk[i - 1].cx,
+          trunk[i].cz - trunk[i - 1].cz,
+        ),
     );
+  const total = cum[cum.length - 1];
+
+  // arc position of the attach (nearest projection onto the trunk polyline)
+  let bd = Number.POSITIVE_INFINITY;
+  let s0 = 0;
+  for (let i = 0; i < trunk.length - 1; i++) {
+    const dx = trunk[i + 1].cx - trunk[i].cx;
+    const dz = trunk[i + 1].cz - trunk[i].cz;
+    const l2 = dx * dx + dz * dz || 1;
+    let t =
+      ((attach.x - trunk[i].cx) * dx + (attach.z - trunk[i].cz) * dz) / l2;
+    t = Math.min(1, Math.max(0, t));
+    const d = Math.hypot(
+      attach.x - (trunk[i].cx + t * dx),
+      attach.z - (trunk[i].cz + t * dz),
+    );
+    if (d < bd) {
+      bd = d;
+      s0 = cum[i] + t * (cum[i + 1] - cum[i]);
+    }
   }
-  return best;
+
+  // which way along the trunk matches the branch's travel
+  const near = sampleTrunkAt(trunk, cum, s0);
+  const ahead = sampleTrunkAt(trunk, cum, Math.min(total, s0 + 1));
+  const dir =
+    (ahead.cx - near.cx) * fwd.x + (ahead.cz - near.cz) * fwd.z >= 0 ? 1 : -1;
+
+  const frames: Frame[] = [];
+  const lifts: number[] = [];
+  const stepM = 12;
+  for (let d = 0; d <= protrudeM; d += stepM) {
+    const s = s0 + dir * d;
+    if (s < 0 || s > total) break;
+    frames.push(sampleTrunkAt(trunk, cum, s));
+    lifts.push(lift);
+  }
+  return { frames, lift: lifts };
+}
+
+// A Frame (center + unit normal) interpolated at arc-length `s` along a polyline of frames.
+function sampleTrunkAt(trunk: Frame[], cum: number[], s: number): Frame {
+  let i = 1;
+  while (i < cum.length - 1 && cum[i] < s) i++;
+  const t = (s - cum[i - 1]) / (cum[i] - cum[i - 1] || 1);
+  const a = trunk[i - 1];
+  const b = trunk[i];
+  const nx = a.nx + (b.nx - a.nx) * t;
+  const nz = a.nz + (b.nz - a.nz) * t;
+  const nl = Math.hypot(nx, nz) || 1;
+  return {
+    cx: a.cx + (b.cx - a.cx) * t,
+    cz: a.cz + (b.cz - a.cz) * t,
+    nx: nx / nl,
+    nz: nz / nl,
+  };
 }
 
 function pushTri(pos: number[], nor: number[], p: V3, q: V3, r: V3) {
@@ -417,7 +484,9 @@ function attachPalette(geo: THREE.BufferGeometry, colors: string[]) {
 
 function greyMaterial(): THREE.Material {
   return new THREE.MeshStandardMaterial({
-    color: NETWORK_STYLE.track.greyColor,
+    color: NETWORK_STYLE.track.edgeColor,
+    emissive: NETWORK_STYLE.track.edgeColor,
+    emissiveIntensity: NETWORK_STYLE.track.edgeEmissiveIntensity,
     side: THREE.DoubleSide,
   });
 }

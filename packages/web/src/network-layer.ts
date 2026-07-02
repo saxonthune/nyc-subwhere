@@ -1,6 +1,7 @@
 import maplibregl from "maplibre-gl";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { LightingSystem } from "./lighting";
 import { NETWORK_STYLE } from "./network-style";
 import {
   FlatTrackRenderer,
@@ -63,6 +64,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private waterTexture?: THREE.Texture;
   private trains?: THREE.InstancedMesh;
   private readonly glow: GlowEffect = createGlow();
+  private readonly lighting = new LightingSystem();
   private trainCapacity = 0;
   // Packed per-frame train draw data handed to the glow effect (train-glow.ts),
   // grown with the core mesh so no per-frame allocation is needed.
@@ -122,10 +124,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   ) {
     this.map = map;
 
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-    const key = new THREE.DirectionalLight(0xffffff, 0.8);
-    key.position.set(0.5, 1, 0.3);
-    this.scene.add(key);
+    this.lighting.addLights(this.scene);
 
     // Basemap first (doc01.03): water plane at the bottom, grey borough land above
     // it, both beneath the network. They carry no userData.kind, so pick() never
@@ -218,11 +217,18 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.glow.render(
       () => this.renderer.render(this.scene, this.camera),
       () => {
-        // Bloom source: restrict the camera to the train layer so only the train
-        // boxes render, then restore the default layer for the next full pass.
-        this.camera.layers.set(TRAIN_LAYER);
-        this.renderer.render(this.scene, this.camera);
-        this.camera.layers.set(0);
+        // Bloom source. "scene": render everything, so the luminance threshold in the
+        // bloom pass tiers the glow by role (trains brightest, then track/stations,
+        // then the dim land; the dark water falls away). "trains": restrict the camera
+        // to the train layer so only the train boxes feed the bloom (the older
+        // trains-only glow, regardless of Route-color luminance).
+        if (NETWORK_STYLE.lighting.bloom.source === "trains") {
+          this.camera.layers.set(TRAIN_LAYER);
+          this.renderer.render(this.scene, this.camera);
+          this.camera.layers.set(0);
+        } else {
+          this.renderer.render(this.scene, this.camera);
+        }
       },
     );
     this.map.triggerRepaint();
@@ -239,15 +245,15 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     const { water } = NETWORK_STYLE;
     const geo = new THREE.CircleGeometry(water.radius, 96);
     geo.rotateX(-Math.PI / 2); // lay the disc flat in the XZ ground plane
-    this.waterTexture = makeWaterTexture(water.color, water.coreFraction);
-    const mesh = new THREE.Mesh(
-      geo,
-      new THREE.MeshBasicMaterial({
-        map: this.waterTexture,
-        transparent: true,
-        depthWrite: false,
-      }),
-    );
+    // The borough outer rings in the local frame feed the shoreline distance field
+    // the water shades against, so its blue is keyed to the real coast.
+    const landRings = this.boroughs
+      .map((b) => b[0])
+      .filter((r) => r && r.length >= 3)
+      .map((r) => r.map((p) => this.toLocal(p)));
+    const { material, texture } = this.lighting.waterMaterial(landRings);
+    this.waterTexture = texture;
+    const mesh = new THREE.Mesh(geo, material);
     mesh.position.y = water.level;
     mesh.frustumCulled = false;
     mesh.renderOrder = -1;
@@ -286,14 +292,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     const merged = mergeGeometries(geos, false);
     for (const g of geos) g.dispose();
     merged.computeVertexNormals();
-    const mesh = new THREE.Mesh(
-      merged,
-      // DoubleSide so the top face reads lit regardless of the extrude's winding.
-      new THREE.MeshStandardMaterial({
-        color: land.color,
-        side: THREE.DoubleSide,
-      }),
-    );
+    // DoubleSide (in landMaterial) so the top face reads lit regardless of winding.
+    const mesh = new THREE.Mesh(merged, this.lighting.landMaterial());
     mesh.position.y = -land.height;
     mesh.frustumCulled = false;
     return mesh;
@@ -307,12 +307,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       puck.height,
       24,
     );
-    this.puckMaterial = new THREE.MeshStandardMaterial({
-      color: puck.color,
-      emissive: new THREE.Color(puck.emissive),
-      emissiveIntensity: puck.emissiveIntensity,
-      transparent: true,
-    });
+    this.puckMaterial = this.lighting.stationMaterial();
     const mesh = new THREE.InstancedMesh(
       geo,
       this.puckMaterial,
@@ -510,31 +505,6 @@ function bearingAt(station: LngLat, lines: LngLat[][]): LngLat | null {
     }
   }
   return dir;
-}
-
-// A radial gradient for the water disc: solid navy out to `coreFraction` of the
-// radius, then easing to transparent at the rim so the disc melts into the black
-// background. CircleGeometry's UVs put the disc center at texture center, so the
-// gradient maps straight onto it.
-function makeWaterTexture(color: string, coreFraction: number): THREE.Texture {
-  const size = 256;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return new THREE.Texture();
-  const c = new THREE.Color(color);
-  const rgb = `${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)}`;
-  const r = size / 2;
-  const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
-  grad.addColorStop(0, `rgba(${rgb},1)`);
-  grad.addColorStop(coreFraction, `rgba(${rgb},1)`);
-  grad.addColorStop(1, `rgba(${rgb},0)`);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.needsUpdate = true;
-  return tex;
 }
 
 function sqDist(a: LngLat, b: LngLat): number {
