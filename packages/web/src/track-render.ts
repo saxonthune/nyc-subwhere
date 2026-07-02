@@ -29,7 +29,11 @@ export type TrackContext = {
 // only this — swap the implementation to change how track and junctions look without
 // touching the layer or the rest of the scene.
 export interface TrackRenderer {
-  build(segments: TrackSegment[], graph: TrackGraph, ctx: TrackContext): TrackBuild;
+  build(
+    segments: TrackSegment[],
+    graph: TrackGraph,
+    ctx: TrackContext,
+  ): TrackBuild;
 }
 
 export type TrackBuild = {
@@ -67,9 +71,11 @@ type P2 = { x: number; z: number };
 // Floors merge into one caret-shader mesh with a face→segment map for picking; walls
 // merge into one unlit grey mesh (not pickable — clicks fall through to the floor).
 export class FlatTrackRenderer implements TrackRenderer {
-  build(segments: TrackSegment[], graph: TrackGraph, ctx: TrackContext): TrackBuild {
-    const { surfaceY } = NETWORK_STYLE.track;
-
+  build(
+    segments: TrackSegment[],
+    graph: TrackGraph,
+    ctx: TrackContext,
+  ): TrackBuild {
     // Each segment's cross-section frames paired with its baked per-vertex lift, both
     // deduped together so the lift stays aligned to the geometry it raises.
     const built = segments.map((seg, si) => {
@@ -87,33 +93,33 @@ export class FlatTrackRenderer implements TrackRenderer {
       return p < 0 || si < p;
     };
 
-    // Floor-coverage field for wall suppression: every corridor's floor area sampled
-    // (across its width, at grade), so a wall piece can ask "does another track's floor
-    // lie just beyond me?" — the mark of an interior (merge) edge to drop.
-    const heights = new HeightGrid();
-    built.forEach((b, si) => {
-      if (b && owns(si)) addFloorSamples(b.frames, b.lift, si, heights);
-    });
-
     const floors: { geo: THREE.BufferGeometry; seg: number }[] = [];
-    const wallPos: number[] = [];
-    const wallNor: number[] = [];
+    const rails: RailEdge[] = [];
     built.forEach((b, si) => {
       if (!b || !owns(si)) return;
       const along = southOriginArcLength(b.frames);
-      floors.push({
-        geo: buildFloor(b.frames, along, segments[si].colors, b.lift),
-        seg: si,
-      });
-      buildWalls(b.frames, b.lift, si, heights, wallPos, wallNor);
+      const f = buildFloor(b.frames, along, segments[si].colors, b.lift);
+      floors.push({ geo: f.geo, seg: si });
+      rails.push(...f.rails);
     });
+
+    // Walls = the boundary of the assembled floor surface. A rail edge used by exactly
+    // one floor is an outline edge and gets a curb; a rail shared by two floors (a tiled
+    // merge) is interior and gets none. No proximity thresholds — the mesh topology
+    // decides. Floors at different grades (a crossing) don't weld, so both keep walls.
+    const wallPos: number[] = [];
+    const wallNor: number[] = [];
+    extrudeBoundary(rails, wallPos, wallNor);
 
     const objects: THREE.Object3D[] = [];
     const maps = new Map<THREE.Object3D, FaceMap>();
 
     if (wallPos.length > 0) {
       const geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", new THREE.Float32BufferAttribute(wallPos, 3));
+      geo.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(wallPos, 3),
+      );
       geo.setAttribute("normal", new THREE.Float32BufferAttribute(wallNor, 3));
       // No userData.kind: walls are not pickable, so a click falls through to floor.
       objects.push(new THREE.Mesh(geo, greyMaterial()));
@@ -149,77 +155,66 @@ export class FlatTrackRenderer implements TrackRenderer {
   }
 }
 
-// A uniform grid of centerline samples (segment id + grade), so a wall piece can ask
-// whether another track's ribbon covers a point at roughly its own height. Cell size
-// exceeds the query radius, so a 3×3 cell scan finds every candidate.
-class HeightGrid {
-  private readonly cell = NETWORK_STYLE.track.halfWidth;
-  private readonly map = new Map<string, { x: number; z: number; seg: number; g: number }[]>();
+// A longitudinal outer-edge of a floor (a "rail"): its two endpoints at floor grade and
+// the unit horizontal outward normal (which way a wall on it faces). Walls are the rails
+// that bound the surface — see extrudeBoundary.
+type RailEdge = { a: V3; b: V3; ox: number; oz: number };
 
-  add(x: number, z: number, seg: number, g: number) {
-    const key = this.key(x, z);
-    const bucket = this.map.get(key);
-    if (bucket) bucket.push({ x, z, seg, g });
-    else this.map.set(key, [{ x, z, seg, g }]);
-  }
-
-  // True if another segment's floor lies within `radius` of (x,z) at a grade within
-  // `gradeEps` — i.e. there is same-height track covering this point just beyond a wall.
-  covered(x: number, z: number, seg: number, g: number): boolean {
-    const { wallSuppressFrac, wallGradeEpsM } = NETWORK_STYLE.track.junction;
-    const radius = this.cell * wallSuppressFrac;
-    const r2 = radius * radius;
-    const gx = Math.floor(x / this.cell);
-    const gz = Math.floor(z / this.cell);
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        const bucket = this.map.get(`${gx + dx},${gz + dz}`);
-        if (!bucket) continue;
-        for (const s of bucket) {
-          if (s.seg === seg) continue;
-          if (Math.abs(s.g - g) > wallGradeEpsM) continue;
-          const ex = x - s.x;
-          const ez = z - s.z;
-          if (ex * ex + ez * ez < r2) return true;
-        }
-      }
+// Boundary extraction: weld rail endpoints by quantized position, then a rail used by
+// exactly one floor is an outline edge (extrude a curb) while one shared by two floors —
+// a tiled merge (Stage C) — is interior and gets none. Welding includes Y, so floors at
+// different grades (a crossing) never share an edge and both keep their walls.
+function extrudeBoundary(rails: RailEdge[], pos: number[], nor: number[]) {
+  const Q = 0.5; // weld quantum, meters
+  const ids = new Map<string, number>();
+  const idOf = (p: V3): number => {
+    const k = `${Math.round(p.x / Q)},${Math.round(p.y / Q)},${Math.round(p.z / Q)}`;
+    let id = ids.get(k);
+    if (id === undefined) {
+      id = ids.size;
+      ids.set(k, id);
     }
-    return false;
+    return id;
+  };
+  const edges = new Map<string, { rail: RailEdge; count: number }>();
+  for (const r of rails) {
+    const ia = idOf(r.a);
+    const ib = idOf(r.b);
+    const key = ia < ib ? `${ia}_${ib}` : `${ib}_${ia}`;
+    const e = edges.get(key);
+    if (e) e.count++;
+    else edges.set(key, { rail: r, count: 1 });
   }
-
-  private key(x: number, z: number): string {
-    return `${Math.floor(x / this.cell)},${Math.floor(z / this.cell)}`;
+  for (const { rail, count } of edges.values()) {
+    if (count === 1) curbFromEdge(rail, pos, nor);
   }
 }
 
-// Tile a segment's floor into the height grid: samples along the centerline at
-// ~sampleStepM and across the half-ribbon (center, mid, outer edge), each at its
-// interpolated grade, so a wall's outboard point can test whether another floor covers
-// it. Normals are interpolated (not renormalized) — placement, not exact metric.
-function addFloorSamples(
-  frames: Frame[],
-  lift: number[],
-  seg: number,
-  grid: HeightGrid,
-) {
-  const { halfWidth, surfaceY } = NETWORK_STYLE.track;
-  const step = NETWORK_STYLE.track.junction.sampleStepM;
-  const across = [halfWidth, halfWidth / 2, 0, -halfWidth / 2, -halfWidth];
-  for (let i = 0; i < frames.length - 1; i++) {
-    const a = frames[i];
-    const b = frames[i + 1];
-    const len = Math.hypot(b.cx - a.cx, b.cz - a.cz) || 1;
-    const n = Math.max(1, Math.ceil(len / step));
-    for (let k = 0; k <= n; k++) {
-      const t = k / n;
-      const cx = a.cx + (b.cx - a.cx) * t;
-      const cz = a.cz + (b.cz - a.cz) * t;
-      const nx = a.nx + (b.nx - a.nx) * t;
-      const nz = a.nz + (b.nz - a.nz) * t;
-      const g = surfaceY + lift[i] + (lift[i + 1] - lift[i]) * t;
-      for (const off of across) grid.add(cx + nx * off, cz + nz * off, seg, g);
-    }
-  }
+// A straddling curb along a rail: inner face, outer face, and top cap, from the rail's
+// floor grade up by wallHeight, `wallThickness` wide across the outward normal.
+function curbFromEdge(r: RailEdge, pos: number[], nor: number[]) {
+  const { wallHeight, wallThickness } = NETWORK_STYLE.track;
+  const t = wallThickness / 2;
+  const { a, b, ox, oz } = r;
+  const off = (p: V3, s: number, y: number): V3 => ({
+    x: p.x + ox * t * s,
+    y,
+    z: p.z + oz * t * s,
+  });
+  const aIn = off(a, -1, a.y);
+  const aInT = off(a, -1, a.y + wallHeight);
+  const aOut = off(a, 1, a.y);
+  const aOutT = off(a, 1, a.y + wallHeight);
+  const bIn = off(b, -1, b.y);
+  const bInT = off(b, -1, b.y + wallHeight);
+  const bOut = off(b, 1, b.y);
+  const bOutT = off(b, 1, b.y + wallHeight);
+  pushTri(pos, nor, aIn, bIn, aInT);
+  pushTri(pos, nor, aInT, bIn, bInT);
+  pushTri(pos, nor, aOut, aOutT, bOut);
+  pushTri(pos, nor, bOut, aOutT, bOutT);
+  pushTri(pos, nor, aInT, bInT, aOutT);
+  pushTri(pos, nor, aOutT, bInT, bOutT);
 }
 
 // mergeGeometries concatenates in push order (useGroups=false), so the running
@@ -258,11 +253,12 @@ function buildFloor(
   along: number[],
   colors: string[],
   lift: number[],
-): THREE.BufferGeometry {
+): { geo: THREE.BufferGeometry; rails: RailEdge[] } {
   const { halfWidth, surfaceY } = NETWORK_STYLE.track;
   const pos: number[] = [];
   const uA: number[] = [];
   const vA: number[] = [];
+  const rails: RailEdge[] = [];
   const push = (p: V3, u: number, v: number) => {
     pos.push(p.x, p.y, p.z);
     uA.push(u);
@@ -281,6 +277,13 @@ function buildFloor(
     push(lo0, -halfWidth, along[i]);
     push(ro1, halfWidth, along[i + 1]);
     push(lo1, -halfWidth, along[i + 1]);
+    // The two rails of this strip, with their outward normal (averaged over the step),
+    // for boundary extraction into walls.
+    const nx = frames[i].nx + frames[i + 1].nx;
+    const nz = frames[i].nz + frames[i + 1].nz;
+    const nl = Math.hypot(nx, nz) || 1;
+    rails.push({ a: ro0, b: ro1, ox: nx / nl, oz: nz / nl });
+    rails.push({ a: lo0, b: lo1, ox: -nx / nl, oz: -nz / nl });
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
@@ -292,65 +295,7 @@ function buildFloor(
   for (let i = 1; i < nor.length; i += 3) nor[i] = 1;
   geo.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
   attachPalette(geo, colors);
-  return geo;
-}
-
-// The two outer-edge curbs of a full-width corridor (at +halfWidth and -halfWidth). A
-// piece is dropped where another track's floor covers the point just *outboard* of it at
-// the same grade — the mark of an interior (merge) edge — so merges lose their facing
-// walls and only the true outline is walled.
-function buildWalls(
-  frames: Frame[],
-  lift: number[],
-  seg: number,
-  heights: HeightGrid,
-  pos: number[],
-  nor: number[],
-) {
-  const { halfWidth, surfaceY } = NETWORK_STYLE.track;
-  const eps = NETWORK_STYLE.track.junction.wallOutboardM;
-  for (const offset of [halfWidth, -halfWidth]) {
-    const probe = offset + Math.sign(offset) * eps;
-    for (let i = 0; i < frames.length - 1; i++) {
-      const a = at(frames[i], probe, 0);
-      const b = at(frames[i + 1], probe, 0);
-      const g = surfaceY + (lift[i] + lift[i + 1]) / 2;
-      if (heights.covered((a.x + b.x) / 2, (a.z + b.z) / 2, seg, g)) continue;
-      curbPiece(frames[i], frames[i + 1], offset, lift[i], lift[i + 1], pos, nor);
-    }
-  }
-}
-
-// One straddling curb quad-strip between two frames at a given across-track offset:
-// inner face, outer face, and a top cap, from the floor top to the wall top plus the
-// per-end dome lift.
-function curbPiece(
-  fa: Frame,
-  fb: Frame,
-  offset: number,
-  la: number,
-  lb: number,
-  pos: number[],
-  nor: number[],
-) {
-  const { surfaceY, wallHeight, wallThickness } = NETWORK_STYLE.track;
-  const t = wallThickness / 2;
-  const floorTop = surfaceY;
-  const wallTop = surfaceY + wallHeight;
-  const aInF = at(fa, offset - t, floorTop + la);
-  const aInT = at(fa, offset - t, wallTop + la);
-  const aOutF = at(fa, offset + t, floorTop + la);
-  const aOutT = at(fa, offset + t, wallTop + la);
-  const bInF = at(fb, offset - t, floorTop + lb);
-  const bInT = at(fb, offset - t, wallTop + lb);
-  const bOutF = at(fb, offset + t, floorTop + lb);
-  const bOutT = at(fb, offset + t, wallTop + lb);
-  pushTri(pos, nor, aInF, bInF, aInT);
-  pushTri(pos, nor, aInT, bInF, bInT);
-  pushTri(pos, nor, aOutF, aOutT, bOutF);
-  pushTri(pos, nor, bOutF, aOutT, bOutT);
-  pushTri(pos, nor, aInT, bInT, aOutT);
-  pushTri(pos, nor, aOutT, bInT, bOutT);
+  return { geo, rails };
 }
 
 type V3 = { x: number; y: number; z: number };
@@ -559,8 +504,8 @@ function dedupeWithLift(
 // the literal baked hex — matching how the palette reads.
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace("#", "");
-  const r = parseInt(h.slice(0, 2), 16) / 255;
-  const g = parseInt(h.slice(2, 4), 16) / 255;
-  const b = parseInt(h.slice(4, 6), 16) / 255;
+  const r = Number.parseInt(h.slice(0, 2), 16) / 255;
+  const g = Number.parseInt(h.slice(2, 4), 16) / 255;
+  const b = Number.parseInt(h.slice(4, 6), 16) / 255;
   return [r || 0, g || 0, b || 0];
 }

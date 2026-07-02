@@ -42,10 +42,10 @@ export function buildGraph(segments: SegmentCollection): TrackGraph {
   const segs: Seg[] = segments.features.map((f, i) => {
     const ll = f.geometry.coordinates;
     const m = ll.map(projectNyc);
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
     for (const [x, y] of m) {
       if (x < minX) minX = x;
       if (y < minY) minY = y;
@@ -107,7 +107,9 @@ function pairCorridors(segs: Seg[], segments: SegmentCollection): number[] {
     let bestScore = PAIR_MATCH_M * 2;
     for (const j of cands) {
       if (partner[j] >= 0) continue;
-      const score = dist(start(segs[i]), finish(segs[j])) + dist(finish(segs[i]), start(segs[j]));
+      const score =
+        dist(start(segs[i]), finish(segs[j])) +
+        dist(finish(segs[i]), start(segs[j]));
       if (score < bestScore) {
         bestScore = score;
         best = j;
@@ -127,9 +129,10 @@ function pairCorridors(segs: Seg[], segments: SegmentCollection): number[] {
 // CROSS_RAMP_M of it takes a raised-cosine lift, max-combined with any other crossing.
 function liftOverProfile(seg: Seg, point: Pt, out: number[]): void {
   const cum = [0];
-  for (let i = 1; i < seg.m.length; i++) cum.push(cum[i - 1] + dist(seg.m[i - 1], seg.m[i]));
+  for (let i = 1; i < seg.m.length; i++)
+    cum.push(cum[i - 1] + dist(seg.m[i - 1], seg.m[i]));
 
-  let bestD = Infinity;
+  let bestD = Number.POSITIVE_INFINITY;
   let crossArc = 0;
   for (let i = 0; i < seg.m.length - 1; i++) {
     const { d, t } = projPointSeg(point, seg.m[i], seg.m[i + 1]);
@@ -142,7 +145,8 @@ function liftOverProfile(seg: Seg, point: Pt, out: number[]): void {
   for (let i = 0; i < seg.m.length; i++) {
     const dd = Math.abs(cum[i] - crossArc);
     if (dd >= CROSS_RAMP_M) continue;
-    const h = CROSS_LIFT_M * 0.5 * (1 + Math.cos((Math.PI * dd) / CROSS_RAMP_M));
+    const h =
+      CROSS_LIFT_M * 0.5 * (1 + Math.cos((Math.PI * dd) / CROSS_RAMP_M));
     if (h > out[i]) out[i] = h;
   }
 }

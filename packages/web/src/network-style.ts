@@ -124,18 +124,10 @@ export const NETWORK_STYLE = {
 
     // Junction handling (doc02.05). Grade separation is baked as a per-vertex elevation
     // profile in the geometry pipeline (build-graph.ts) and branch tails are conformed
-    // onto their trunks (conform-merges.ts), so the renderer just lifts floor and walls
-    // by the profile and sweeps the conformed floors together. A wall piece is then
-    // dropped where another track's floor covers the point `wallOutboardM` beyond that
-    // edge (within `wallSuppressFrac`·halfWidth and a grade within `wallGradeEpsM`) — the
-    // mark of an interior merge edge — so merges lose their facing walls while crossings,
-    // at different baked grades, keep theirs. sampleStepM spaces the floor-sample grid.
-    junction: {
-      wallOutboardM: 4,
-      wallSuppressFrac: 0.4,
-      wallGradeEpsM: 4,
-      sampleStepM: 6,
-    },
+    // onto their trunks (conform-merges.ts). The renderer lifts floor and walls by the
+    // profile, fuses each corridor's two directions into one full-width ribbon, and
+    // derives walls as the boundary of the assembled floor surface (track-render.ts) —
+    // so there are no wall-suppression thresholds left to tune.
   },
 
   // Live trains (doc01.03): a single elongated box per Trip, length along the

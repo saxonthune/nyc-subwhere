@@ -9,7 +9,9 @@ const [out, lng, lat, zoom = "17", pitch = "45", bearing = "0"] =
   process.argv.slice(2);
 
 if (!out || !lng || !lat) {
-  console.error("usage: shot-at <out.png> <lng> <lat> [zoom] [pitch] [bearing]");
+  console.error(
+    "usage: shot-at <out.png> <lng> <lat> [zoom] [pitch] [bearing]",
+  );
   process.exit(1);
 }
 

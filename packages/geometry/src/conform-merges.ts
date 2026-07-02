@@ -35,7 +35,7 @@ export function conformMerges(segments: SegmentCollection): number {
   }));
 
   let conformed = 0;
-  segs.forEach((b) => {
+  for (const b of segs) {
     // Reshape either end that lands on a superset trunk. `atEnd` false = the start
     // vertex is the join, so reverse, reshape the tail, and reverse back.
     for (const atEnd of [true, false]) {
@@ -49,10 +49,12 @@ export function conformMerges(segments: SegmentCollection): number {
       b.m = atEnd ? reshaped : reshaped.reverse();
       conformed++;
     }
-  });
+  }
 
   for (const s of segs) {
-    segments.features[s.i].geometry.coordinates = s.m.map(unprojectNyc) as LngLat[];
+    segments.features[s.i].geometry.coordinates = s.m.map(
+      unprojectNyc,
+    ) as LngLat[];
   }
   return conformed;
 }
@@ -87,7 +89,8 @@ function blendTail(poly: Pt[], attach: Pt, tan: Pt): Pt[] | null {
   if (dist(end, attach) < 1) return null;
 
   const cum = [0];
-  for (let i = 1; i < poly.length; i++) cum.push(cum[i - 1] + dist(poly[i - 1], poly[i]));
+  for (let i = 1; i < poly.length; i++)
+    cum.push(cum[i - 1] + dist(poly[i - 1], poly[i]));
   const total = cum[cum.length - 1];
   const cut = Math.max(0, total - BLEND_M);
 
@@ -123,7 +126,7 @@ function hermite(p0: Pt, t0: Pt, p1: Pt, t1: Pt, s: number): Pt {
 }
 
 function nearestOnPoly(p: Pt, poly: Pt[]): { point: Pt; tan: Pt; d: number } {
-  let best = { point: poly[0], tan: [1, 0] as Pt, d: Infinity };
+  let best = { point: poly[0], tan: [1, 0] as Pt, d: Number.POSITIVE_INFINITY };
   for (let i = 0; i < poly.length - 1; i++) {
     const a = poly[i];
     const bb = poly[i + 1];

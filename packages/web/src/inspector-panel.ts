@@ -98,17 +98,15 @@ export class InspectorPanel extends LitElement {
       margin-bottom: 4px;
     }
     .bullet {
-      display: grid;
-      place-items: center;
       width: 30px;
       height: 30px;
-      border-radius: 50%;
-      color: #fff;
+      flex: 0 0 auto;
+    }
+    .bullet text {
+      fill: #fff;
+      font-family: system-ui, sans-serif;
       font-weight: 700;
       font-size: 16px;
-      /* Pin the glyph's line box to its own height so grid centering isn't thrown
-         off by the panel's inherited line-height (~19.6px). */
-      line-height: 1;
     }
     .trip-id {
       font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -163,6 +161,21 @@ export class InspectorPanel extends LitElement {
     this.target = null;
   }
 
+  // Guarantee the route glyph is centered in its circle. CSS/SVG anchors align the
+  // font's em box, not the glyph's ink — a capital sits high (cap-height above the
+  // baseline, empty descender space below) and off horizontally by its side
+  // bearing. The only font-independent fix is to measure the actually-rendered
+  // bounding box and translate its center onto the circle center (15, 15).
+  updated() {
+    const text = this.renderRoot.querySelector<SVGTextElement>(".bullet text");
+    if (!text) return;
+    text.removeAttribute("transform"); // measure the untranslated glyph
+    const b = text.getBBox();
+    const dx = 15 - (b.x + b.width / 2);
+    const dy = 15 - (b.y + b.height / 2);
+    text.setAttribute("transform", `translate(${dx} ${dy})`);
+  }
+
   render() {
     const t = this.target;
     if (!t) return nothing;
@@ -187,7 +200,10 @@ export class InspectorPanel extends LitElement {
     return html`
       <div class="train">
         <div class="route">
-          <span class="bullet" style="background:${v.color}">${v.routeId}</span>
+          <svg class="bullet" viewBox="0 0 30 30" aria-hidden="true">
+            <circle cx="15" cy="15" r="15" fill=${v.color}></circle>
+            <text x="15" y="15" text-anchor="middle">${v.routeId}</text>
+          </svg>
           <span class="heading">${v.heading}</span>
           ${
             v.uncertain
