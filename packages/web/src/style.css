@@ -4,6 +4,16 @@ body {
   padding: 0;
   height: 100%;
   background: #000;
+  /* Touch app, not a document: kill the browser's double-tap-to-zoom delay and
+     the long-press text selection/callout that make the UI feel broken on mobile.
+     `manipulation` still allows pan + scroll (the map and scrollable panels need
+     it); only the double-tap zoom gesture is dropped. */
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
 }
 
 #map {

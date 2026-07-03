@@ -119,12 +119,20 @@ export class FlatTrackRenderer implements TrackRenderer {
       number,
       { geo: THREE.BufferGeometry; seg: number }[]
     >();
+    const { halfWidth } = NETWORK_STYLE.track;
     built.forEach((frames, si) => {
       if (!frames || !owns(si)) return;
-      const along = southOriginArcLength(frames);
+      // Fuse the corridor's two directions onto their shared midline so the fill covers the
+      // same footprint the silhouette unions (else an offset between the directions leaves the
+      // colour short of the far wall). One-directional corridors keep their own centerline.
+      const partnerFrames = graph.partner[si] >= 0 ? built[graph.partner[si]] : undefined;
+      const { frames: fused, halfW } = partnerFrames
+        ? fuseFrames(frames, partnerFrames, halfWidth)
+        : { frames, halfW: frames.map(() => halfWidth) };
+      const along = southOriginArcLength(fused);
       const level = graph.grade[si] ?? 0;
       const taper = graph.taper?.[si] ?? [false, false];
-      const geo = buildFloor(frames, along, segments[si].colors, taper);
+      const geo = buildFloor(fused, along, halfW, segments[si].colors, taper);
       const g = byLevel.get(level);
       if (g) g.push({ geo, seg: si });
       else byLevel.set(level, [{ geo, seg: si }]);
@@ -221,11 +229,12 @@ function mergeEntries(
 function buildFloor(
   frames: Frame[],
   along: number[],
+  baseHalfW: number[],
   colors: string[],
   taper: [boolean, boolean],
 ): THREE.BufferGeometry {
-  const { halfWidth, surfaceY } = NETWORK_STYLE.track;
-  const w = taperWidths(frames, taper, halfWidth);
+  const { surfaceY } = NETWORK_STYLE.track;
+  const w = taperFractions(frames, taper).map((fr, i) => baseHalfW[i] * fr);
   const pos: number[] = [];
   const uA: number[] = [];
   const vA: number[] = [];
@@ -261,17 +270,13 @@ function buildFloor(
   return geo;
 }
 
-// Per-frame half-width. Full `halfWidth` everywhere, except a merging end (baked `taper`
-// flag) ramps from a narrow tip up to full width over the taper length, so the branch tucks
-// under its trunk like a turnout instead of piling on full-width. See taperProfile for the
-// short-segment and tip-floor guards.
-function taperWidths(
-  frames: Frame[],
-  taper: [boolean, boolean],
-  halfWidth: number,
-): number[] {
+// Per-frame taper fraction (0..1). 1 everywhere, except a merging end (baked `taper` flag)
+// ramps from a narrow tip up to full width over the taper length, so the branch tucks under
+// its trunk like a turnout instead of piling on full-width. See taperProfile for the
+// short-segment and tip-floor guards. Multiplied by the per-frame base half-width.
+function taperFractions(frames: Frame[], taper: [boolean, boolean]): number[] {
   const n = frames.length;
-  if (!taper[0] && !taper[1]) return new Array(n).fill(halfWidth);
+  if (!taper[0] && !taper[1]) return new Array(n).fill(1);
   const cum = [0];
   for (let i = 1; i < n; i++) {
     cum.push(
@@ -282,8 +287,65 @@ function taperWidths(
         ),
     );
   }
-  const { taperLenM } = NETWORK_STYLE.track;
-  return taperProfile(cum, taper, taperLenM).map((f) => halfWidth * f);
+  return taperProfile(cum, taper, NETWORK_STYLE.track.taperLenM);
+}
+
+// Fuse a corridor's two antiparallel direction centerlines into one ribbon on their shared
+// midline: for each frame of the owned direction, take the midpoint to the nearest point on
+// the partner and a half-width that reaches both far walls (`halfWidth + gap/2`), so the fill
+// spans exactly what the silhouette unions. Where the owned frame runs past the partner's
+// extent (nearest point is a partner endpoint), there is no correspondence, so keep the plain
+// half-width rather than bulging. The owned tangent's normal drives the cross-section.
+function fuseFrames(
+  owned: Frame[],
+  partner: Frame[],
+  halfWidth: number,
+): { frames: Frame[]; halfW: number[] } {
+  const frames: Frame[] = [];
+  const halfW: number[] = [];
+  for (const f of owned) {
+    const q = nearestOnFrames(f.cx, f.cz, partner);
+    if (q) {
+      frames.push({ cx: (f.cx + q.x) / 2, cz: (f.cz + q.z) / 2, nx: f.nx, nz: f.nz });
+      halfW.push(halfWidth + Math.hypot(f.cx - q.x, f.cz - q.z) / 2);
+    } else {
+      frames.push(f);
+      halfW.push(halfWidth);
+    }
+  }
+  return { frames, halfW };
+}
+
+// Nearest point on the partner polyline to (px, pz), or null when the closest approach is at a
+// partner endpoint (the owned frame overhangs the partner's extent, so there is no true
+// opposite-direction match to average with).
+function nearestOnFrames(
+  px: number,
+  pz: number,
+  frames: Frame[],
+): { x: number; z: number } | null {
+  let best: { x: number; z: number } | null = null;
+  let bd = Number.POSITIVE_INFINITY;
+  let bClamped = true;
+  for (let i = 0; i < frames.length - 1; i++) {
+    const ax = frames[i].cx;
+    const az = frames[i].cz;
+    const dx = frames[i + 1].cx - ax;
+    const dz = frames[i + 1].cz - az;
+    const l2 = dx * dx + dz * dz || 1;
+    let t = ((px - ax) * dx + (pz - az) * dz) / l2;
+    const clamped = t < 0 || t > 1;
+    t = Math.min(1, Math.max(0, t));
+    const qx = ax + t * dx;
+    const qz = az + t * dz;
+    const d = (px - qx) ** 2 + (pz - qz) ** 2;
+    if (d < bd) {
+      bd = d;
+      best = { x: qx, z: qz };
+      bClamped = clamped;
+    }
+  }
+  return bClamped ? null : best;
 }
 
 // Taper width fraction (0..1) at each vertex given cumulative arc length. A merging end ramps

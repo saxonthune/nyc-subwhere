@@ -14,6 +14,7 @@ import segmentsUrl from "./assets/segments.geojson?url";
 import stationsUrl from "./assets/stations.geojson?url";
 import trackGraphUrl from "./assets/track-graph.json?url";
 import trackIndexUrl from "./assets/track-index.json?url";
+import { HeaderPanel } from "./header-panel";
 import {
   InspectorPanel,
   type InspectorTarget,
@@ -57,6 +58,8 @@ const map = new maplibregl.Map({
 });
 
 map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+document.body.append(new HeaderPanel());
 
 // Debug hook (doc02.05): expose the map so the junction screenshot harness can
 // jumpTo a named location deterministically. Harmless in production.
