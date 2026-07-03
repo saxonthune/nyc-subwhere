@@ -68,6 +68,13 @@ export interface StationProperties {
   stopId: string; // parent station id, e.g. "127"
   name: string;
   platforms: string[]; // directional stop_ids the realtime feed reports, e.g. ["127N", "127S"]
+  // Platform signage for each direction, derived from the MTA Subway Stations
+  // dataset by pairing the compass label with the terminal borough(s) of serving
+  // routes, e.g. "Uptown & The Bronx" / "Downtown & Brooklyn" — the rider-facing
+  // name for N / S. Absent when the build had no labels file or the station
+  // wasn't in it.
+  northLabel?: string;
+  southLabel?: string;
 }
 
 export interface SegmentProperties {
@@ -145,6 +152,11 @@ export interface TrackGraph {
   // same corridor), or -1 if one-directional. The renderer fuses a pair into a single
   // full-width track ribbon so there is no centerline seam. Parallel to features.
   partner: number[];
+  // Whether each segment's [start, end] is an angled branch merging into a different-Route
+  // trunk (doc02.07). The renderer tapers the caret floor's width to a point at such an end
+  // so the branch tucks under the trunk like a railway turnout instead of piling on
+  // full-width and clashing. Parallel to features.
+  taper: [boolean, boolean][];
   merges: TrackMerge[];
   // The dissolved network outline (doc02.07): every Segment centerline buffered by the
   // half-ribbon width and boolean-unioned, so merges/branches tile with no seam. Each

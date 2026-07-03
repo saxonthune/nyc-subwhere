@@ -21,11 +21,19 @@ import { buildSilhouette } from "./build-silhouette";
 import { buildStations } from "./build-stations";
 import { buildTracks } from "./build-tracks";
 import { type Row, normalize } from "./gtfs-normalize";
+import { healEndpoints } from "./heal-endpoints";
 import { locateStops } from "./locate-stops";
 import { selectCanonical } from "./select-canonical";
+import { smoothSegments } from "./smooth-segments";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const GTFS_DIR = path.join(REPO_ROOT, "data", "gtfs");
+const LABELS_JSON = path.join(
+  REPO_ROOT,
+  "packages",
+  "geometry",
+  "direction-labels.json",
+);
 const OUT_DIR = path.join(REPO_ROOT, "packages", "web", "src", "assets");
 const REPORT_PATH = path.join(
   REPO_ROOT,
@@ -72,6 +80,31 @@ async function readRepStopTimes(
   return out;
 }
 
+export interface DirectionLabels {
+  north: string;
+  south: string;
+}
+
+// Per-direction platform signage from the committed derived-labels file
+// (packages/geometry/direction-labels.json, produced by gen-direction-labels),
+// keyed by GTFS Stop ID (the parent station id). Optional: an absent file just
+// leaves stations without labels, and the web app falls back to Northbound/Southbound.
+async function readDirectionLabels(): Promise<Map<string, DirectionLabels>> {
+  const labels = new Map<string, DirectionLabels>();
+  try {
+    const parsed = JSON.parse(await readFile(LABELS_JSON, "utf8")) as Record<
+      string,
+      { north?: string; south?: string }
+    >;
+    for (const [id, l] of Object.entries(parsed)) {
+      labels.set(id, { north: l.north ?? "", south: l.south ?? "" });
+    }
+  } catch {
+    // Optional dataset; without it stations carry no direction labels.
+  }
+  return labels;
+}
+
 async function readFeedVersion(): Promise<string | null> {
   try {
     const rows = await readCsv("feed_info.txt");
@@ -82,14 +115,21 @@ async function readFeedVersion(): Promise<string | null> {
 }
 
 async function main(): Promise<void> {
-  const [stopRows, routeRows, tripRows, shapeRows, feedVersion] =
-    await Promise.all([
-      readCsv("stops.txt"),
-      readCsv("routes.txt"),
-      readCsv("trips.txt"),
-      readCsv("shapes.txt"),
-      readFeedVersion(),
-    ]);
+  const [
+    stopRows,
+    routeRows,
+    tripRows,
+    shapeRows,
+    feedVersion,
+    directionLabels,
+  ] = await Promise.all([
+    readCsv("stops.txt"),
+    readCsv("routes.txt"),
+    readCsv("trips.txt"),
+    readCsv("shapes.txt"),
+    readFeedVersion(),
+    readDirectionLabels(),
+  ]);
 
   // One representative trip per shape_id — every trip on a shape visits the same
   // stops in the same order, so one is enough to learn the shape's stop sequence.
@@ -112,19 +152,26 @@ async function main(): Promise<void> {
   const located = canonical.map((c) => locateStops(c, normalized));
 
   const {
-    collection: segments,
+    collection: rawSegments,
     mergeReport,
     preMerge,
   } = buildSegments(located, normalized);
+  // Extend dangling branch endpoints onto the trunk they merge into (doc02.07), so the
+  // silhouette union closes the throat; the `taper` flags tell the renderer which ends are
+  // angled merges to narrow to a point (turnout) so the caret floors don't clash. Then Chaikin-
+  // smooth every centerline so curves render as arcs, not faceted squiggles (doc02.07).
+  const { segments: healed, taper } = healEndpoints(rawSegments);
+  const segments = smoothSegments(healed);
   // Junction tessellation (doc02.07): merges/branches are dissolved by the silhouette
   // union, not by reshaping branch tails, so segment geometry is left as-is. `merges`
   // stays empty (the union supersedes per-branch conforming).
   const tracks = buildTracks(located, feedVersion);
-  const stations = buildStations(canonical, normalized);
+  const stations = buildStations(canonical, normalized, directionLabels);
   const graph = {
     ...buildGraph(segments),
     merges: [],
-    silhouette: buildSilhouette(segments),
+    taper,
+    silhouette: buildSilhouette(segments, taper),
   };
 
   // Selected canonical shapes as inspectable LineStrings (routes/direction/

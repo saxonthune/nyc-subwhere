@@ -43,7 +43,7 @@ interface Seg {
 
 export function buildGraph(
   segments: SegmentCollection,
-): Omit<TrackGraph, "merges" | "silhouette"> {
+): Omit<TrackGraph, "merges" | "silhouette" | "taper"> {
   const segs: Seg[] = segments.features.map((f, i) => {
     const ll = f.geometry.coordinates;
     const m = ll.map(projectNyc);

@@ -1,0 +1,1986 @@
+{
+  "101": {
+    "north": "Last Stop",
+    "south": "Manhattan"
+  },
+  "103": {
+    "north": "Van Cortlandt",
+    "south": "Manhattan"
+  },
+  "104": {
+    "north": "Van Cortlandt",
+    "south": "Manhattan"
+  },
+  "106": {
+    "north": "The Bronx",
+    "south": "Downtown"
+  },
+  "107": {
+    "north": "The Bronx",
+    "south": "Downtown"
+  },
+  "108": {
+    "north": "The Bronx",
+    "south": "Downtown"
+  },
+  "109": {
+    "north": "The Bronx",
+    "south": "Downtown"
+  },
+  "110": {
+    "north": "The Bronx",
+    "south": "Downtown"
+  },
+  "111": {
+    "north": "The Bronx",
+    "south": "Downtown"
+  },
+  "112": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown"
+  },
+  "113": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown"
+  },
+  "114": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown"
+  },
+  "115": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown"
+  },
+  "116": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown"
+  },
+  "117": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown"
+  },
+  "118": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown"
+  },
+  "119": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown"
+  },
+  "120": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "121": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "122": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "123": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "124": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "125": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "126": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "127": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "128": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "129": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "130": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "131": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "132": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "133": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "134": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "135": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "136": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "137": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "138": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown"
+  },
+  "139": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown"
+  },
+  "142": {
+    "north": "Uptown & The Bronx",
+    "south": "Last Stop"
+  },
+  "201": {
+    "north": "Last Stop",
+    "south": "Manhattan"
+  },
+  "204": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "205": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "206": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "207": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "208": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "209": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "210": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "211": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "212": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "213": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "214": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "215": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "216": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "217": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "218": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "219": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "220": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "221": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "222": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "224": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "225": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "226": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "227": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "228": {
+    "north": "Uptown & The Bronx",
+    "south": "Brooklyn"
+  },
+  "229": {
+    "north": "Uptown & The Bronx",
+    "south": "Brooklyn"
+  },
+  "230": {
+    "north": "Uptown & The Bronx",
+    "south": "Brooklyn"
+  },
+  "231": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "232": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "233": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "234": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "235": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "236": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "237": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "238": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "239": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "241": {
+    "north": "Manhattan",
+    "south": "Flatbush"
+  },
+  "242": {
+    "north": "Manhattan",
+    "south": "Flatbush"
+  },
+  "243": {
+    "north": "Manhattan",
+    "south": "Flatbush"
+  },
+  "244": {
+    "north": "Manhattan",
+    "south": "Flatbush"
+  },
+  "245": {
+    "north": "Manhattan",
+    "south": "Flatbush"
+  },
+  "246": {
+    "north": "Manhattan",
+    "south": "Flatbush"
+  },
+  "247": {
+    "north": "Manhattan",
+    "south": "Last Stop"
+  },
+  "248": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "249": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "250": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "251": {
+    "north": "Manhattan",
+    "south": "New Lots"
+  },
+  "252": {
+    "north": "Manhattan",
+    "south": "New Lots"
+  },
+  "253": {
+    "north": "Manhattan",
+    "south": "New Lots"
+  },
+  "254": {
+    "north": "Manhattan",
+    "south": "New Lots"
+  },
+  "255": {
+    "north": "Manhattan",
+    "south": "New Lots"
+  },
+  "256": {
+    "north": "Manhattan",
+    "south": "New Lots"
+  },
+  "257": {
+    "north": "Manhattan",
+    "south": "Last Stop"
+  },
+  "301": {
+    "north": "Last Stop",
+    "south": "Downtown & Brooklyn"
+  },
+  "302": {
+    "north": "Harlem",
+    "south": "Downtown & Brooklyn"
+  },
+  "401": {
+    "north": "Last Stop",
+    "south": "Manhattan"
+  },
+  "402": {
+    "north": "Woodlawn",
+    "south": "Manhattan"
+  },
+  "405": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "406": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "407": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "408": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "409": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "410": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "411": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "412": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "413": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "414": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "415": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "416": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "418": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "419": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "420": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "423": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "501": {
+    "north": "Last Stop",
+    "south": "Manhattan"
+  },
+  "502": {
+    "north": "Eastchester",
+    "south": "Manhattan"
+  },
+  "503": {
+    "north": "Eastchester",
+    "south": "Manhattan"
+  },
+  "504": {
+    "north": "Eastchester",
+    "south": "Manhattan"
+  },
+  "505": {
+    "north": "Eastchester",
+    "south": "Manhattan"
+  },
+  "601": {
+    "north": "Last Stop",
+    "south": "Manhattan"
+  },
+  "602": {
+    "north": "Pelham Bay",
+    "south": "Manhattan"
+  },
+  "603": {
+    "north": "Pelham Bay",
+    "south": "Manhattan"
+  },
+  "604": {
+    "north": "Pelham Bay",
+    "south": "Manhattan"
+  },
+  "606": {
+    "north": "Pelham Bay",
+    "south": "Manhattan"
+  },
+  "607": {
+    "north": "Pelham Bay",
+    "south": "Manhattan"
+  },
+  "608": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "609": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "610": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "611": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "612": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "613": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "614": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "615": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "616": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "617": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "618": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "619": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "621": {
+    "north": "The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "622": {
+    "north": "The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "623": {
+    "north": "The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "624": {
+    "north": "The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "625": {
+    "north": "The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "626": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "627": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "628": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "629": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "630": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "631": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "632": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "633": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "634": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "635": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "636": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "637": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "638": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "639": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "640": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "701": {
+    "north": "Last Stop",
+    "south": "Manhattan"
+  },
+  "702": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "705": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "706": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "707": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "708": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "709": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "710": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "711": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "712": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "713": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "714": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "715": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "716": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "718": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "719": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "720": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "721": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "723": {
+    "north": "Queens",
+    "south": "Hudson Yards"
+  },
+  "724": {
+    "north": "Queens",
+    "south": "Hudson Yards"
+  },
+  "725": {
+    "north": "Queens",
+    "south": "Hudson Yards"
+  },
+  "726": {
+    "north": "Last Stop",
+    "south": "Queens"
+  },
+  "901": {
+    "north": "Times Square",
+    "south": "Last Stop"
+  },
+  "902": {
+    "north": "Last Stop",
+    "south": "Grand Central"
+  },
+  "A02": {
+    "north": "Last Stop",
+    "south": "Downtown & Queens"
+  },
+  "A03": {
+    "north": "Uptown",
+    "south": "Downtown & Queens"
+  },
+  "A05": {
+    "north": "Uptown",
+    "south": "Downtown & Queens"
+  },
+  "A06": {
+    "north": "Uptown",
+    "south": "Downtown & Queens"
+  },
+  "A07": {
+    "north": "Uptown",
+    "south": "Downtown & Queens"
+  },
+  "A09": {
+    "north": "Uptown",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A10": {
+    "north": "Uptown",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A11": {
+    "north": "Uptown",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A12": {
+    "north": "Uptown",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A14": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A15": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A16": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A17": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A18": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A19": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A20": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A21": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A22": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A24": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A25": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A27": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A28": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A30": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A31": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A32": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A33": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A34": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "A36": {
+    "north": "Uptown",
+    "south": "Brooklyn"
+  },
+  "A38": {
+    "north": "Uptown",
+    "south": "Brooklyn"
+  },
+  "A40": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A41": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A42": {
+    "north": "Westbound",
+    "south": "Queens"
+  },
+  "A43": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A44": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A45": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A46": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A47": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A48": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A49": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A50": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A51": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A52": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A53": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A54": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A55": {
+    "north": "Manhattan",
+    "south": "Queens"
+  },
+  "A57": {
+    "north": "Manhattan",
+    "south": "Queens"
+  },
+  "A59": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A60": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A61": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "A63": {
+    "north": "Manhattan",
+    "south": "Ozone Park"
+  },
+  "A64": {
+    "north": "Manhattan",
+    "south": "Ozone Park"
+  },
+  "A65": {
+    "north": "Manhattan",
+    "south": "Last Stop"
+  },
+  "B04": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "B06": {
+    "north": "Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "B08": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "B10": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "B12": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "B13": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "B14": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "B15": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "B16": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "B17": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "B18": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "B19": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "B20": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "B21": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "B22": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "B23": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "D01": {
+    "north": "Last Stop",
+    "south": "Manhattan"
+  },
+  "D03": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "D04": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "D05": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "D06": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "D07": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "D08": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "D09": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "D10": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "D11": {
+    "north": "Northbound",
+    "south": "Manhattan"
+  },
+  "D12": {
+    "north": "The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "D13": {
+    "north": "Uptown & The Bronx",
+    "south": "Downtown & Brooklyn"
+  },
+  "D14": {
+    "north": "Outbound",
+    "south": "Downtown & Brooklyn"
+  },
+  "D15": {
+    "north": "Uptown & The Bronx & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "D16": {
+    "north": "Uptown & The Bronx & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "D17": {
+    "north": "Uptown & The Bronx & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "D18": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "D19": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "D20": {
+    "north": "Uptown & The Bronx & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "D21": {
+    "north": "Uptown & The Bronx & Queens",
+    "south": "Downtown & Brooklyn & Queens"
+  },
+  "D22": {
+    "north": "Uptown & The Bronx",
+    "south": "Brooklyn"
+  },
+  "D24": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D25": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D26": {
+    "north": "Northbound",
+    "south": "Southbound"
+  },
+  "D27": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D28": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D29": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D30": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D31": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D32": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D33": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D34": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D35": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D37": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D38": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D39": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D40": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "D41": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "D42": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "D43": {
+    "north": "Manhattan",
+    "south": "Last Stop"
+  },
+  "E01": {
+    "north": "Uptown & Queens",
+    "south": "Last Stop"
+  },
+  "F01": {
+    "north": "Last Stop",
+    "south": "Manhattan"
+  },
+  "F02": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "F03": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "F04": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "F05": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "F06": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "F07": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "F09": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "F11": {
+    "north": "Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "F12": {
+    "north": "Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "F14": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "F15": {
+    "north": "Uptown & Queens",
+    "south": "Brooklyn"
+  },
+  "F16": {
+    "north": "Uptown & Queens",
+    "south": "Brooklyn"
+  },
+  "F18": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "F20": {
+    "north": "Northbound",
+    "south": "Southbound"
+  },
+  "F21": {
+    "north": "Northbound",
+    "south": "Southbound"
+  },
+  "F22": {
+    "north": "Northbound",
+    "south": "Southbound"
+  },
+  "F23": {
+    "north": "Northbound",
+    "south": "Southbound"
+  },
+  "F24": {
+    "north": "Northbound",
+    "south": "Southbound"
+  },
+  "F25": {
+    "north": "Northbound",
+    "south": "Southbound"
+  },
+  "F26": {
+    "north": "Northbound",
+    "south": "Southbound"
+  },
+  "F27": {
+    "north": "Northbound",
+    "south": "Southbound"
+  },
+  "F29": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "F30": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "F31": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "F32": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "F33": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "F34": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "F35": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "F36": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "F38": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "F39": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "G05": {
+    "north": "Last Stop",
+    "south": "Manhattan"
+  },
+  "G06": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "G07": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "G08": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G09": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G10": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G11": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G12": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G13": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G14": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G15": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G16": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G18": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G19": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G20": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G21": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "G22": {
+    "north": "Last Stop",
+    "south": "Brooklyn"
+  },
+  "G24": {
+    "north": "Court Square",
+    "south": "Brooklyn"
+  },
+  "G26": {
+    "north": "Queens",
+    "south": "Southbound"
+  },
+  "G28": {
+    "north": "Queens",
+    "south": "Southbound"
+  },
+  "G29": {
+    "north": "Queens",
+    "south": "Southbound"
+  },
+  "G30": {
+    "north": "Queens",
+    "south": "Southbound"
+  },
+  "G31": {
+    "north": "Queens",
+    "south": "Southbound"
+  },
+  "G32": {
+    "north": "Queens",
+    "south": "Southbound"
+  },
+  "G33": {
+    "north": "Queens",
+    "south": "Southbound"
+  },
+  "G34": {
+    "north": "Queens",
+    "south": "Southbound"
+  },
+  "G35": {
+    "north": "Queens",
+    "south": "Southbound"
+  },
+  "G36": {
+    "north": "Queens",
+    "south": "Southbound"
+  },
+  "H01": {
+    "north": "Manhattan",
+    "south": "Rockaways"
+  },
+  "H02": {
+    "north": "Manhattan",
+    "south": "Rockaways"
+  },
+  "H03": {
+    "north": "Manhattan",
+    "south": "Rockaways"
+  },
+  "H04": {
+    "north": "Inbound",
+    "south": "Rockaways"
+  },
+  "H06": {
+    "north": "Manhattan",
+    "south": "Far Rockaway"
+  },
+  "H07": {
+    "north": "Manhattan",
+    "south": "Far Rockaway"
+  },
+  "H08": {
+    "north": "Manhattan",
+    "south": "Far Rockaway"
+  },
+  "H09": {
+    "north": "Manhattan",
+    "south": "Far Rockaway"
+  },
+  "H10": {
+    "north": "Manhattan",
+    "south": "Far Rockaway"
+  },
+  "H11": {
+    "north": "Manhattan",
+    "south": "Last Stop"
+  },
+  "H12": {
+    "north": "Inbound",
+    "south": "Rockaway Park"
+  },
+  "H13": {
+    "north": "Inbound",
+    "south": "Rockaway Park"
+  },
+  "H14": {
+    "north": "Inbound",
+    "south": "Rockaway Park"
+  },
+  "H15": {
+    "north": "Inbound",
+    "south": "Last Stop"
+  },
+  "J12": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "J13": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "J14": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "J15": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "J16": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "J17": {
+    "north": "Jamaica",
+    "south": "Manhattan"
+  },
+  "J19": {
+    "north": "Queens",
+    "south": "Manhattan"
+  },
+  "J20": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "J21": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "J22": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "J23": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "J24": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "J27": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "J28": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "J29": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "J30": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "J31": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "L01": {
+    "north": "Last Stop",
+    "south": "Brooklyn"
+  },
+  "L02": {
+    "north": "West Side",
+    "south": "Brooklyn"
+  },
+  "L03": {
+    "north": "West Side",
+    "south": "Brooklyn"
+  },
+  "L05": {
+    "north": "West Side",
+    "south": "Brooklyn"
+  },
+  "L06": {
+    "north": "West Side",
+    "south": "Brooklyn"
+  },
+  "L08": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L10": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L11": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L12": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L13": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L14": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L15": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L16": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L17": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L19": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L20": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L21": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L22": {
+    "north": "Manhattan",
+    "south": "Outbound"
+  },
+  "L24": {
+    "north": "Manhattan",
+    "south": "Canarsie"
+  },
+  "L25": {
+    "north": "Manhattan",
+    "south": "Canarsie"
+  },
+  "L26": {
+    "north": "Manhattan",
+    "south": "Canarsie"
+  },
+  "L27": {
+    "north": "Manhattan",
+    "south": "Canarsie"
+  },
+  "L28": {
+    "north": "Manhattan",
+    "south": "Canarsie"
+  },
+  "L29": {
+    "north": "Manhattan",
+    "south": "Last Stop"
+  },
+  "M01": {
+    "north": "Inbound",
+    "south": "Last Stop"
+  },
+  "M04": {
+    "north": "Inbound",
+    "south": "Middle Village"
+  },
+  "M05": {
+    "north": "Inbound",
+    "south": "Middle Village"
+  },
+  "M06": {
+    "north": "Inbound",
+    "south": "Middle Village"
+  },
+  "M08": {
+    "north": "Inbound",
+    "south": "Middle Village"
+  },
+  "M09": {
+    "north": "Inbound",
+    "south": "Middle Village"
+  },
+  "M10": {
+    "north": "Inbound",
+    "south": "Middle Village"
+  },
+  "M11": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "M12": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "M13": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "M14": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "M16": {
+    "north": "Outbound",
+    "south": "Manhattan"
+  },
+  "M18": {
+    "north": "Brooklyn",
+    "south": "Inbound"
+  },
+  "M19": {
+    "north": "Brooklyn",
+    "south": "Downtown"
+  },
+  "M20": {
+    "north": "Brooklyn",
+    "south": "Downtown"
+  },
+  "M21": {
+    "north": "Brooklyn",
+    "south": "Downtown"
+  },
+  "M22": {
+    "north": "Brooklyn",
+    "south": "Downtown"
+  },
+  "M23": {
+    "north": "Brooklyn",
+    "south": "Last Stop"
+  },
+  "N02": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "N03": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "N04": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "N05": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "N06": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "N07": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "N08": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "N09": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "N10": {
+    "north": "Manhattan",
+    "south": "Coney Island"
+  },
+  "Q01": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "Q03": {
+    "north": "Uptown",
+    "south": "Downtown & Brooklyn"
+  },
+  "Q04": {
+    "north": "Uptown",
+    "south": "Downtown & Brooklyn"
+  },
+  "Q05": {
+    "north": "Last Stop",
+    "south": "Downtown & Brooklyn"
+  },
+  "R01": {
+    "north": "Last Stop",
+    "south": "Manhattan"
+  },
+  "R03": {
+    "north": "Astoria",
+    "south": "Manhattan"
+  },
+  "R04": {
+    "north": "Astoria",
+    "south": "Manhattan"
+  },
+  "R05": {
+    "north": "Astoria",
+    "south": "Manhattan"
+  },
+  "R06": {
+    "north": "Astoria",
+    "south": "Manhattan"
+  },
+  "R08": {
+    "north": "Astoria",
+    "south": "Manhattan"
+  },
+  "R09": {
+    "north": "Astoria",
+    "south": "Manhattan"
+  },
+  "R11": {
+    "north": "Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R13": {
+    "north": "Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R14": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R15": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R16": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R17": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R18": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R19": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R20": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R21": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R22": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R23": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R24": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R25": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R26": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R27": {
+    "north": "Uptown & Queens",
+    "south": "Downtown & Brooklyn"
+  },
+  "R28": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R29": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R30": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R31": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R32": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R33": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R34": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R35": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R36": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R39": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R40": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R41": {
+    "north": "Manhattan",
+    "south": "Southbound"
+  },
+  "R42": {
+    "north": "Manhattan",
+    "south": "Bay Ridge"
+  },
+  "R43": {
+    "north": "Manhattan",
+    "south": "Bay Ridge"
+  },
+  "R44": {
+    "north": "Manhattan",
+    "south": "Bay Ridge"
+  },
+  "R45": {
+    "north": "Manhattan",
+    "south": "Last Stop"
+  },
+  "S01": {
+    "north": "Last Stop",
+    "south": "Prospect Park"
+  },
+  "S03": {
+    "north": "Franklin Av",
+    "south": "Prospect Park"
+  },
+  "S04": {
+    "north": "Franklin Av",
+    "south": "Prospect Park"
+  },
+  "S09": {
+    "north": "Ferry",
+    "south": "Last Stop"
+  },
+  "S11": {
+    "north": "Ferry",
+    "south": "Tottenville"
+  },
+  "S13": {
+    "north": "Ferry",
+    "south": "Tottenville"
+  },
+  "S14": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S15": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S16": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S17": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S18": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S19": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S20": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S21": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S22": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S23": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S24": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S25": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S26": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S27": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S28": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S29": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S30": {
+    "north": "Ferry",
+    "south": "South Shore"
+  },
+  "S31": {
+    "north": "Last Stop",
+    "south": "South Shore"
+  }
+}

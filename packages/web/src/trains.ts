@@ -437,7 +437,7 @@ export class TripEstimator {
 
 // Express-diamond variants ("6X", "7X") share their trunk color, so strip a
 // trailing X before the lookup.
-function colorFor(routeId: string): string {
+export function colorFor(routeId: string): string {
   return (
     ROUTE_COLOR[routeId] ??
     ROUTE_COLOR[routeId.replace(/X$/, "")] ??

@@ -39,7 +39,7 @@ declare module "clipper-lib" {
     PolyType: { ptSubject: number };
     PolyFillType: { pftNonZero: number };
     JoinType: { jtRound: number };
-    EndType: { etOpenRound: number };
+    EndType: { etOpenRound: number; etOpenButt: number };
   };
   export default ClipperLib;
 }

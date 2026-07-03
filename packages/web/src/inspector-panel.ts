@@ -9,19 +9,49 @@ export interface InspectorTarget {
   title: string;
   data?: unknown;
   train?: TrainView;
+  station?: StationView;
 }
 
 // A clicked train, resolved for display: route + heading, the last stop it was
 // known at, and the stops ahead. Times are already localized strings and stopIds
 // already resolved to station names by main.ts — the panel only lays them out.
+// `stationIndex` links a row back to its station (null if not a baked station).
+export interface TrainStop {
+  name: string;
+  time: string;
+  stationIndex: number | null;
+}
 export interface TrainView {
   routeId: string;
   tripId: string; // per-train identifier from the feed
   color: string; // "#RRGGBB", the route color
   heading: string; // "Northbound" | "Southbound"
   uncertain: boolean;
-  lastStop: { name: string; time: string };
-  next: { name: string; time: string }[];
+  lastStop: TrainStop;
+  next: TrainStop[];
+}
+
+// A clicked station, resolved for display by main.ts: the routes that stop here
+// (from the baked track index) and, per direction, the soonest trains arriving
+// from the live snapshot. Times/waits are already formatted; the panel lays out.
+export interface StationView {
+  routes: RouteBullet[];
+  directions: DirectionBoard[];
+}
+export interface RouteBullet {
+  routeId: string;
+  color: string; // "#RRGGBB"
+}
+export interface DirectionBoard {
+  heading: string; // "Northbound" | "Southbound"
+  arrivals: StationArrival[];
+}
+export interface StationArrival {
+  tripId: string; // selecting a row inspects + centers this train
+  routeId: string;
+  color: string;
+  time: string; // localized clock time of arrival
+  wait: string; // "now" | "N min"
 }
 
 // Modal inspector docked to the lower screen (doc01.03). A reactive `target`:
@@ -102,6 +132,10 @@ export class InspectorPanel extends LitElement {
       height: 30px;
       flex: 0 0 auto;
     }
+    .bullet.sm {
+      width: 20px;
+      height: 20px;
+    }
     .bullet text {
       fill: #fff;
       font-family: system-ui, sans-serif;
@@ -155,10 +189,84 @@ export class InspectorPanel extends LitElement {
       color: #cfcfcf;
       white-space: nowrap;
     }
+    .station {
+      padding: 12px;
+    }
+    .routes {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .boards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+    .dir-head {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #9a9a9a;
+      margin-bottom: 6px;
+    }
+    .arr {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .wait {
+      font-variant-numeric: tabular-nums;
+      color: #cfcfcf;
+      white-space: nowrap;
+    }
+    .empty {
+      color: #7d7d7d;
+      font-size: 12px;
+      padding: 5px 0;
+    }
+    .stop.link {
+      cursor: pointer;
+      margin: 0 -6px;
+      padding-left: 6px;
+      padding-right: 6px;
+      border-radius: 5px;
+    }
+    .stop.link:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
   `;
+
+  // A timetable row was clicked: main.ts inspects and centers that train.
+  private selectTrip(tripId: string) {
+    this.dispatchEvent(
+      new CustomEvent("trip-select", {
+        detail: { tripId },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  // A train-inspector stop was clicked: main.ts inspects and centers that station.
+  private selectStation(stationIndex: number) {
+    this.dispatchEvent(
+      new CustomEvent("station-select", {
+        detail: { stationIndex },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
 
   private close() {
     this.target = null;
+    // Let main.ts drop the pick it re-resolves each poll, so a closed panel
+    // stays closed instead of reopening on the next snapshot.
+    this.dispatchEvent(
+      new CustomEvent("inspector-close", { bubbles: true, composed: true }),
+    );
   }
 
   // Guarantee the route glyph is centered in its circle. CSS/SVG anchors align the
@@ -167,13 +275,15 @@ export class InspectorPanel extends LitElement {
   // bearing. The only font-independent fix is to measure the actually-rendered
   // bounding box and translate its center onto the circle center (15, 15).
   updated() {
-    const text = this.renderRoot.querySelector<SVGTextElement>(".bullet text");
-    if (!text) return;
-    text.removeAttribute("transform"); // measure the untranslated glyph
-    const b = text.getBBox();
-    const dx = 15 - (b.x + b.width / 2);
-    const dy = 15 - (b.y + b.height / 2);
-    text.setAttribute("transform", `translate(${dx} ${dy})`);
+    const texts =
+      this.renderRoot.querySelectorAll<SVGTextElement>(".bullet text");
+    for (const text of texts) {
+      text.removeAttribute("transform"); // measure the untranslated glyph
+      const b = text.getBBox();
+      const dx = 15 - (b.x + b.width / 2);
+      const dy = 15 - (b.y + b.height / 2);
+      text.setAttribute("transform", `translate(${dx} ${dy})`);
+    }
   }
 
   render() {
@@ -190,8 +300,64 @@ export class InspectorPanel extends LitElement {
         ${
           t.train
             ? this.renderTrain(t.train)
-            : html`<pre class="body">${JSON.stringify(t.data, null, 2)}</pre>`
+            : t.station
+              ? this.renderStation(t.station)
+              : html`<pre class="body">${JSON.stringify(t.data, null, 2)}</pre>`
         }
+      </div>
+    `;
+  }
+
+  // A route roundel. viewBox is a fixed 30×30; CSS (`.bullet` / `.bullet.sm`)
+  // sizes it, and `updated()` recenters the glyph against its measured ink box.
+  private bullet(routeId: string, color: string, small = false) {
+    return html`
+      <svg
+        class="bullet ${small ? "sm" : ""}"
+        viewBox="0 0 30 30"
+        aria-hidden="true"
+      >
+        <circle cx="15" cy="15" r="15" fill=${color}></circle>
+        <text x="15" y="15" text-anchor="middle">${routeId}</text>
+      </svg>
+    `;
+  }
+
+  private renderStation(v: StationView) {
+    return html`
+      <div class="station">
+        <div class="routes">
+          ${v.routes.map((r) => this.bullet(r.routeId, r.color))}
+        </div>
+        <div class="boards">
+          ${v.directions.map(
+            (d) => html`
+              <div class="board">
+                <div class="dir-head">${d.heading}</div>
+                ${
+                  d.arrivals.length
+                    ? html`<ul class="stops">
+                        ${d.arrivals.map(
+                          (a) => html`
+                            <li
+                              class="stop link"
+                              @click=${() => this.selectTrip(a.tripId)}
+                            >
+                              <span class="arr">
+                                ${this.bullet(a.routeId, a.color, true)}
+                                <span class="time">${a.time}</span>
+                              </span>
+                              <span class="wait">${a.wait}</span>
+                            </li>
+                          `,
+                        )}
+                      </ul>`
+                    : html`<div class="empty">No trains predicted</div>`
+                }
+              </div>
+            `,
+          )}
+        </div>
       </div>
     `;
   }
@@ -200,10 +366,7 @@ export class InspectorPanel extends LitElement {
     return html`
       <div class="train">
         <div class="route">
-          <svg class="bullet" viewBox="0 0 30 30" aria-hidden="true">
-            <circle cx="15" cy="15" r="15" fill=${v.color}></circle>
-            <text x="15" y="15" text-anchor="middle">${v.routeId}</text>
-          </svg>
+          ${this.bullet(v.routeId, v.color)}
           <span class="heading">${v.heading}</span>
           ${
             v.uncertain
@@ -213,26 +376,30 @@ export class InspectorPanel extends LitElement {
         </div>
         <div class="trip-id">${v.tripId}</div>
         <ul class="stops">
-          <li class="stop last">
-            <span>
-              <span class="name">${v.lastStop.name}</span>
-              <span class="role"> · departed</span>
-            </span>
-            <span class="time">${v.lastStop.time}</span>
-          </li>
-          ${v.next.map(
-            (s, i) => html`
-              <li class="stop">
-                <span>
-                  <span class="name">${s.name}</span>
-                  ${i === 0 ? html`<span class="role"> · next</span>` : nothing}
-                </span>
-                <span class="time">${s.time}</span>
-              </li>
-            `,
+          ${this.trainStopRow(v.lastStop, "departed", true)}
+          ${v.next.map((s, i) =>
+            this.trainStopRow(s, i === 0 ? "next" : null, false),
           )}
         </ul>
       </div>
+    `;
+  }
+
+  // One train-inspector stop row. Clickable (navigates to the station) only when
+  // the stop resolved to a baked station.
+  private trainStopRow(s: TrainStop, role: string | null, last: boolean) {
+    const clickable = s.stationIndex != null;
+    return html`
+      <li
+        class="stop ${last ? "last" : ""} ${clickable ? "link" : ""}"
+        @click=${() => clickable && this.selectStation(s.stationIndex as number)}
+      >
+        <span>
+          <span class="name">${s.name}</span>
+          ${role ? html`<span class="role"> · ${role}</span>` : nothing}
+        </span>
+        <span class="time">${s.time}</span>
+      </li>
     `;
   }
 }

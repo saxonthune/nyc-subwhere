@@ -1,6 +1,8 @@
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type {
+  Direction,
+  LngLat,
   RenderSnapshot,
   SegmentProperties,
   StationProperties,
@@ -12,7 +14,11 @@ import segmentsUrl from "./assets/segments.geojson?url";
 import stationsUrl from "./assets/stations.geojson?url";
 import trackGraphUrl from "./assets/track-graph.json?url";
 import trackIndexUrl from "./assets/track-index.json?url";
-import { InspectorPanel, type InspectorTarget } from "./inspector-panel";
+import {
+  InspectorPanel,
+  type InspectorTarget,
+  type StationView,
+} from "./inspector-panel";
 import { Menu } from "./menu";
 import { logEstimatorReport, logPredictionError } from "./metrics";
 import {
@@ -22,7 +28,7 @@ import {
 } from "./network-layer";
 import { predictionErrors } from "./prediction-error";
 import { StatsPanel } from "./stats-panel";
-import { TripEstimator, indexTracks, resolveTrip } from "./trains";
+import { TripEstimator, colorFor, indexTracks, resolveTrip } from "./trains";
 
 const container = document.getElementById("map");
 
@@ -139,14 +145,36 @@ map.on("load", async () => {
   // station carries its parent id and its platform ids; also index the parent so
   // a bare id (or one whose suffix we strip) still resolves.
   const stopName = new Map<string, string>();
-  for (const p of stationProps) {
+  const stationIndexByStop = new Map<string, number>();
+  stationProps.forEach((p, i) => {
     stopName.set(p.stopId, p.name);
-    for (const platform of p.platforms ?? []) stopName.set(platform, p.name);
-  }
+    stationIndexByStop.set(p.stopId, i);
+    for (const platform of p.platforms ?? []) {
+      stopName.set(platform, p.name);
+      stationIndexByStop.set(platform, i);
+    }
+  });
   const nameOfStop = (stopId: string) =>
     stopName.get(stopId) ?? stopName.get(stopId.slice(0, -1)) ?? stopId;
+  // A train-inspector stop row links to its station; resolve the directional
+  // stop_id (or its parent) back to the station index, or null if it isn't one
+  // we baked geometry for.
+  const indexOfStop = (stopId: string) =>
+    stationIndexByStop.get(stopId) ??
+    stationIndexByStop.get(stopId.slice(0, -1)) ??
+    null;
   const fmtTime = (ms: number) =>
     new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const waitLabel = (ms: number) => {
+    const min = Math.round(ms / 60_000);
+    return min <= 0 ? "now" : `${min} min`;
+  };
+  const HEADING: Record<Direction, string> = {
+    N: "Northbound",
+    S: "Southbound",
+  };
+  const routeSort = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { numeric: true });
 
   // Live trains (doc02.04): poll the worker's render frame every ~30s and fold it
   // into the TripEstimator, then each animation frame read every Trip's position
@@ -158,8 +186,72 @@ map.on("load", async () => {
   const tracks = indexTracks(trackIndex);
   const estimator = new TripEstimator();
 
+  // Routes serving each directional stop_id, from the baked track index — the
+  // static side of the station inspector (which routes stop here), independent
+  // of whether any train is live right now.
+  const routesByStop = new Map<string, Set<string>>();
+  for (const t of trackIndex.tracks) {
+    for (const s of t.stops) {
+      let set = routesByStop.get(s.stopId);
+      if (!set) routesByStop.set(s.stopId, (set = new Set()));
+      set.add(t.routeId);
+    }
+  }
+
   let snapshot: RenderSnapshot | null = null;
   let clockSkew = 0;
+
+  // Rider-facing station view (doc01.03): the routes that stop here (static, from
+  // the track index) and, per direction, the next few trains arriving from the
+  // live snapshot — the soonest upcoming arrival each Trip predicts for one of
+  // this station's platforms.
+  const ARRIVALS_PER_DIRECTION = 5;
+  // Express-diamond variants ("6X", "7X") are the same line as their trunk; the
+  // panel folds them under the trunk roundel rather than showing a separate one.
+  const trunkOf = (routeId: string) => routeId.replace(/X$/, "");
+  const stationView = (p: StationProperties): StationView => {
+    const now = Date.now() + clockSkew;
+    const platforms = new Set(p.platforms);
+    const routeIds = new Set<string>();
+    for (const platform of p.platforms) {
+      for (const rid of routesByStop.get(platform) ?? []) routeIds.add(trunkOf(rid));
+    }
+    const routes = [...routeIds]
+      .sort(routeSort)
+      .map((rid) => ({ routeId: rid, color: colorFor(rid) }));
+
+    const byDir: Record<
+      Direction,
+      { tripId: string; routeId: string; arrival: number }[]
+    > = { N: [], S: [] };
+    for (const trip of snapshot?.trips ?? []) {
+      const stop = trip.upcoming.find((u) => platforms.has(u.stopId));
+      if (!stop) continue;
+      byDir[trip.direction].push({
+        tripId: trip.tripId,
+        routeId: trunkOf(trip.routeId),
+        arrival: stop.arrival,
+      });
+    }
+    const label: Record<Direction, string | undefined> = {
+      N: p.northLabel,
+      S: p.southLabel,
+    };
+    const directions = (["N", "S"] as Direction[]).map((dir) => ({
+      heading: label[dir] ?? HEADING[dir],
+      arrivals: byDir[dir]
+        .sort((a, b) => a.arrival - b.arrival)
+        .slice(0, ARRIVALS_PER_DIRECTION)
+        .map((a) => ({
+          tripId: a.tripId,
+          routeId: a.routeId,
+          color: colorFor(a.routeId),
+          time: fmtTime(a.arrival),
+          wait: waitLabel(a.arrival - now),
+        })),
+    }));
+    return { routes, directions };
+  };
 
   // Resolve a geometric pick into the raw contract data used to render it: the
   // baked StationProperties / SegmentProperties for a station or segment, and the
@@ -167,13 +259,7 @@ map.on("load", async () => {
   const toTarget = (r: PickResult): InspectorTarget | null => {
     if (r.kind === "station") {
       const p = stationProps[r.stationIndex];
-      return p
-        ? {
-            kind: "station",
-            title: p.name,
-            data: { stationIndex: r.stationIndex, properties: p },
-          }
-        : null;
+      return p ? { kind: "station", title: p.name, station: stationView(p) } : null;
     }
     if (r.kind === "segment") {
       const p = segmentProps[r.segmentIndex];
@@ -205,18 +291,63 @@ map.on("load", async () => {
         lastStop: {
           name: nameOfStop(trip.lastKnownStop.stopId),
           time: fmtTime(trip.lastKnownStop.at),
+          stationIndex: indexOfStop(trip.lastKnownStop.stopId),
         },
         next: trip.upcoming.slice(0, 3).map((u) => ({
           name: nameOfStop(u.stopId),
           time: fmtTime(u.arrival),
+          stationIndex: indexOfStop(u.stopId),
         })),
       },
     };
   };
 
+  // The inspector re-derives its view from each fresh snapshot, so keep the pick
+  // that's open and re-resolve it on every poll rather than freezing the click's
+  // data. Closing the panel drops the pick so it stays closed (doc01.03).
+  let openPick: PickResult | null = null;
+  const syncInspector = () => {
+    inspector.target = openPick ? toTarget(openPick) : null;
+    if (openPick && !inspector.target) openPick = null;
+  };
   map.on("click", (e) => {
+    // Segment picks are resolvable (toTarget still handles them) but no longer
+    // open the inspector — only stations and trains do. A segment click reads as
+    // "clicked nothing", deselecting any open panel.
     const r = networkLayer.pick(e.point);
-    inspector.target = r ? toTarget(r) : null;
+    openPick = r && r.kind !== "segment" ? r : null;
+    syncInspector();
+  });
+  inspector.addEventListener("inspector-close", () => {
+    openPick = null;
+  });
+
+  // Ease the camera to a point placed 33% down the screen, not dead center — the
+  // panel covers the lower screen. `offset` is the target's pixel gap from the
+  // container center (negative = up).
+  const easeToUpperThird = (lngLat: LngLat) => {
+    const h = map.getContainer().clientHeight;
+    map.easeTo({ center: lngLat, offset: [0, (0.33 - 0.5) * h] });
+  };
+
+  // A timetable row selects its train: swap the panel to that train and, once,
+  // ease the camera to where it's rendered.
+  inspector.addEventListener("trip-select", (e) => {
+    const { tripId } = (e as CustomEvent<{ tripId: string }>).detail;
+    openPick = { kind: "train", tripId };
+    syncInspector();
+    const pose = estimator
+      .poses(Date.now() + clockSkew)
+      .find((p) => p.tripId === tripId);
+    if (pose) easeToUpperThird(pose.lngLat);
+  });
+
+  // A train-inspector stop row selects its station: swap the panel and center it.
+  inspector.addEventListener("station-select", (e) => {
+    const { stationIndex } = (e as CustomEvent<{ stationIndex: number }>).detail;
+    openPick = { kind: "station", stationIndex };
+    syncInspector();
+    easeToUpperThird(lngLats[stationIndex]);
   });
 
   const POLL_MS = 30_000;
@@ -245,6 +376,8 @@ map.on("load", async () => {
       const report = estimator.ingest(snapshot, tracks, Date.now() + clockSkew);
       logEstimatorReport(report);
       statsPanel.estimator = report;
+      // Fold the fresh arrivals into an open station/train inspector (doc01.03).
+      syncInspector();
     } catch (err) {
       console.warn("trip poll failed", err);
     } finally {

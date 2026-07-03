@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build-geometry": "tsx src/build-geometry.ts",
+    "gen-direction-labels": "tsx src/gen-direction-labels.ts",
     "build-boroughs": "tsx src/build-boroughs.ts",
     "typecheck": "tsc --noEmit"
   },

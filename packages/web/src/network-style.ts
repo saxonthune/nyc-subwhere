@@ -141,6 +141,10 @@ export const NETWORK_STYLE = {
     // Live trains ride this far to the left of travel — the center of their own
     // direction's half-ribbon (roughly halfWidth/2), so a train sits on its track.
     trainOffsetM: 13,
+    // Turnout taper (doc02.07): at a branch end that merges into a trunk (baked `taper`
+    // flag), the caret floor narrows from `halfWidth` to a point over this arc length, so the
+    // branch tucks under the trunk like a switch instead of piling on full-width and clashing.
+    taperLenM: 34,
     // Caret marks on the floor (doc01.03): the ribbon is partitioned into chevron
     // cells by one bent coordinate `g = along + |across|·tan(bendDeg)`; each cell is
     // one palette color and the black caret line sits exactly on the cell boundary,

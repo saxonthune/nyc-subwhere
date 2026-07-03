@@ -19,6 +19,9 @@ export type TrackGraph = {
   // overlapping floors resolve by depth. Parallel to segments; 0 is ground.
   grade: number[];
   partner: number[];
+  // Per segment, whether its [start, end] is an angled merge into a trunk (doc02.07): the
+  // floor tapers to a point there so the branch tucks under like a turnout.
+  taper: [boolean, boolean][];
   merges: TrackMerge[];
   // The dissolved network outline (doc02.07): each polygon is [outerRing, ...holeRings]
   // in LngLat. The renderer extrudes each ring down into a platform edge.
@@ -120,7 +123,8 @@ export class FlatTrackRenderer implements TrackRenderer {
       if (!frames || !owns(si)) return;
       const along = southOriginArcLength(frames);
       const level = graph.grade[si] ?? 0;
-      const geo = buildFloor(frames, along, segments[si].colors);
+      const taper = graph.taper?.[si] ?? [false, false];
+      const geo = buildFloor(frames, along, segments[si].colors, taper);
       const g = byLevel.get(level);
       if (g) g.push({ geo, seg: si });
       else byLevel.set(level, [{ geo, seg: si }]);
@@ -218,8 +222,10 @@ function buildFloor(
   frames: Frame[],
   along: number[],
   colors: string[],
+  taper: [boolean, boolean],
 ): THREE.BufferGeometry {
   const { halfWidth, surfaceY } = NETWORK_STYLE.track;
+  const w = taperWidths(frames, taper, halfWidth);
   const pos: number[] = [];
   const uA: number[] = [];
   const vA: number[] = [];
@@ -229,16 +235,18 @@ function buildFloor(
     vA.push(v);
   };
   for (let i = 0; i < frames.length - 1; i++) {
-    const ro0 = at(frames[i], halfWidth, surfaceY);
-    const lo0 = at(frames[i], -halfWidth, surfaceY);
-    const ro1 = at(frames[i + 1], halfWidth, surfaceY);
-    const lo1 = at(frames[i + 1], -halfWidth, surfaceY);
-    push(ro0, halfWidth, along[i]);
-    push(ro1, halfWidth, along[i + 1]);
-    push(lo0, -halfWidth, along[i]);
-    push(lo0, -halfWidth, along[i]);
-    push(ro1, halfWidth, along[i + 1]);
-    push(lo1, -halfWidth, along[i + 1]);
+    const w0 = w[i];
+    const w1 = w[i + 1];
+    const ro0 = at(frames[i], w0, surfaceY);
+    const lo0 = at(frames[i], -w0, surfaceY);
+    const ro1 = at(frames[i + 1], w1, surfaceY);
+    const lo1 = at(frames[i + 1], -w1, surfaceY);
+    push(ro0, w0, along[i]);
+    push(ro1, w1, along[i + 1]);
+    push(lo0, -w0, along[i]);
+    push(lo0, -w0, along[i]);
+    push(ro1, w1, along[i + 1]);
+    push(lo1, -w1, along[i + 1]);
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
@@ -251,6 +259,56 @@ function buildFloor(
   geo.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
   attachPalette(geo, colors);
   return geo;
+}
+
+// Per-frame half-width. Full `halfWidth` everywhere, except a merging end (baked `taper`
+// flag) ramps from a narrow tip up to full width over the taper length, so the branch tucks
+// under its trunk like a turnout instead of piling on full-width. See taperProfile for the
+// short-segment and tip-floor guards.
+function taperWidths(
+  frames: Frame[],
+  taper: [boolean, boolean],
+  halfWidth: number,
+): number[] {
+  const n = frames.length;
+  if (!taper[0] && !taper[1]) return new Array(n).fill(halfWidth);
+  const cum = [0];
+  for (let i = 1; i < n; i++) {
+    cum.push(
+      cum[i - 1] +
+        Math.hypot(
+          frames[i].cx - frames[i - 1].cx,
+          frames[i].cz - frames[i - 1].cz,
+        ),
+    );
+  }
+  const { taperLenM } = NETWORK_STYLE.track;
+  return taperProfile(cum, taper, taperLenM).map((f) => halfWidth * f);
+}
+
+// Taper width fraction (0..1) at each vertex given cumulative arc length. A merging end ramps
+// from TAPER_TIP_FRAC at the tip up to 1 over the taper length. Two guards keep short
+// trunk-connectors (both ends flagged) from collapsing to a spindle: each end's ramp is
+// capped to a fraction of the total so a full-width core always survives, and the tip never
+// reaches zero width so its outline is a small cap the trunk swallows rather than a spike.
+// Shared shape with build-silhouette's taperProfile — keep the two in sync.
+const TAPER_TIP_FRAC = 0.12;
+const TAPER_MAX_FRAC_BOTH = 0.4;
+const TAPER_MAX_FRAC_ONE = 0.85;
+function taperProfile(
+  cum: number[],
+  [tStart, tEnd]: [boolean, boolean],
+  taperLenM: number,
+): number[] {
+  const total = cum[cum.length - 1] || 1;
+  const cap = tStart && tEnd ? TAPER_MAX_FRAC_BOTH : TAPER_MAX_FRAC_ONE;
+  const lStart = tStart ? Math.min(taperLenM, cap * total) : 0;
+  const lEnd = tEnd ? Math.min(taperLenM, cap * total) : 0;
+  const ramp = (d: number, l: number) => (l <= 0 ? 1 : Math.min(1, d / l));
+  return cum.map((c) => {
+    const f = Math.min(ramp(c, lStart), ramp(total - c, lEnd));
+    return TAPER_TIP_FRAC + (1 - TAPER_TIP_FRAC) * f;
+  });
 }
 
 // Platform edges from the baked silhouette (doc02.07): each ring is a closed loop of the

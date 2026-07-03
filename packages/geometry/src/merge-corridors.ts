@@ -32,11 +32,18 @@ const CORRIDOR_MIN_OVERLAP_M = 100;
 const CORRIDOR_MIN_LINK_M = 50; // min matched length to union two sub-pieces
 // A run only counts as shared ground if its median separation is near zero.
 // Distinct parallel structures sit apart the whole way (Times Sq 7 Av vs
-// Broadway ~9 m, Manhattan Bridge sides ~22 m), and a shallow crossing's
-// separation is V-shaped — near 0 at the crossing, ε at the run's ends —
-// so its median lands around ε/2 ≈ 15 m. Alignments that truly coincide
-// (Hoyt, CPW, QBL, J/M/Z) all measure ≤ ~5 m.
+// Broadway ~9 m), and a shallow crossing's separation is V-shaped — near 0 at
+// the crossing, ε at the run's ends — so its median lands around ε/2 ≈ 15 m.
+// Alignments that truly coincide (Hoyt, CPW, QBL, J/M/Z) all measure ≤ ~5 m.
 const CORRIDOR_MAX_MEDIAN_SEP_M = 6;
+// Exception for one very long codirectional run: the Manhattan Bridge carries
+// B/D and N/Q on its two sides ~22 m apart for ~2.7 km — the only place two
+// distinct alignments run parallel this far. The map wants them read as one
+// ribbon per direction (they are drawn as a stacked double otherwise), so a run
+// this long is allowed a wider median. Nothing else in the network runs parallel
+// past ~300 m, so the length gate admits only the bridge.
+const CORRIDOR_LONG_OVERLAP_M = 800;
+const CORRIDOR_LONG_MAX_SEP_M = 25;
 // When choosing which of a group's coincident members to draw, a member counts
 // as redundant if this fraction of it is covered by others — high enough that a
 // genuine unique tail survives, low enough to absorb cut-rounding at the ends.
@@ -169,9 +176,14 @@ export function mergeParallelCorridors(pieces: SegmentPiece[]): {
         const pairs = run.slice(start, end + 1);
         const a0 = pairs[0].ai;
         const a1 = pairs[pairs.length - 1].ai;
-        if (a1 - a0 < CORRIDOR_MIN_OVERLAP_M) return;
+        const overlap = a1 - a0;
+        if (overlap < CORRIDOR_MIN_OVERLAP_M) return;
         const ds = pairs.map((p) => p.d).sort((x, y) => x - y);
-        if (ds[Math.floor(ds.length / 2)] > CORRIDOR_MAX_MEDIAN_SEP_M) return;
+        const maxSep =
+          overlap >= CORRIDOR_LONG_OVERLAP_M
+            ? CORRIDOR_LONG_MAX_SEP_M
+            : CORRIDOR_MAX_MEDIAN_SEP_M;
+        if (ds[Math.floor(ds.length / 2)] > maxSep) return;
         cutsByPiece[i].push(a0 - CORRIDOR_STEP_M / 2, a1 + CORRIDOR_STEP_M / 2);
         links.push({ i, j, pairs });
       };
