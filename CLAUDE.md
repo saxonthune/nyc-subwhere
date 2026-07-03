@@ -62,3 +62,18 @@ on PATH, or `python3 .rhidoc/rhidoc.py` if the workspace was made portable.
   they go stale the moment a question is answered and confuse later readers who can't tell
   a live unknown from one already resolved elsewhere. A *decided* note that names what the
   artifact deliberately still owns is fine; an open research to-do is not.
+
+## Working with the running app
+
+- **The user runs `just dev-all` (Vite web server + Cloudflare worker) themselves.** Do not start
+  it. To check a change against the live app, ask the user to look, or read outputs directly (the
+  metrics JSONL, the bake's stdout). Vite config changes need a restart — prompt the user rather
+  than restarting yourself.
+- **Never `pkill -f vite`** — it also kills the user's instance. If you need a throwaway server,
+  run it on a dedicated port (`vite --port 5199 --strictPort`) and stop only that, or run it as a
+  background task and stop that task. Often `vite build` already validates compilation without a
+  server.
+- **Screenshot a junction** with `just shot <out.png> <lng> <lat> [zoom] [pitch] [bearing]`
+  (`packages/web/scripts/shot-at.mjs`) — it drives the running server to a camera pose; paste the
+  `shot:` line from the Advanced Stats panel. A trailing `debugCycles` arg cycles the debug
+  centerline views (doc02.07 / doc02.08).

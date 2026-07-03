@@ -143,7 +143,9 @@ export class StatsPanel extends LitElement {
             ×
           </button>
         </header>
-        <pre class="body">${c ? html`${centerLine(c)}
+        <pre class="body">${
+          c
+            ? html`${centerLine(c)}
 <span
               class="shot ${this.copied ? "copied" : ""}"
               title="Click to copy"
@@ -151,7 +153,9 @@ export class StatsPanel extends LitElement {
               >shot: ${shot}${this.copied ? "  ✓ copied" : ""}</span
             >
 
-` : nothing}${[
+`
+            : nothing
+        }${[
           this.tally ? lines(this.tally) : "…",
           estimatorLines(this.estimator),
           errorLines(this.error),
