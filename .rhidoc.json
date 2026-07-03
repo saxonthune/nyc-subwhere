@@ -1,0 +1,10 @@
+{
+  "root": ".rhidoc/",
+  "title": "nyc-subwhere",
+  "description": "",
+  "externalRefPaths": [
+    "CLAUDE.md",
+    ".claude/skills/**/*.md",
+    ".cursor/**/*.md"
+  ]
+}

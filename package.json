@@ -1,0 +1,16 @@
+{
+  "name": "nyc-subwhere",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "typecheck": "pnpm -r run typecheck",
+    "build": "pnpm -r run build"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "typescript": "^5.7.2"
+  }
+}

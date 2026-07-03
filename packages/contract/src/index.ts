@@ -1,0 +1,187 @@
+// --- Live render frame (doc02.04) ---------------------------------------
+// The frame the worker ships each poll and the web app renders on top of the
+// baked geometry below. See doc01.01 (glossary) for terms, doc02.04 (backend)
+// for how the worker produces it, doc01.03 for the behaviors it serves.
+//
+// Invariant: this expresses resolved position-in-time, never raw feed mechanics
+// or how the worker derived anything. Every future worker — naive passthrough,
+// snapshot-diffing, schedule-fused — only improves the *quality* of `lastKnownStop`
+// and `upcoming`, never their shape. That keeps the web app's interpolation
+// frozen as the worker gets cleverer.
+
+/** Epoch milliseconds on the worker's clock. */
+export type EpochMs = number;
+
+export interface RenderSnapshot {
+  /** Worker clock when this frame was built — the web app uses it for
+   *  clock-skew correction and to tell how stale its data has gone. */
+  asOf: EpochMs;
+  trips: TripState[];
+}
+
+export interface TripState {
+  tripId: string;
+  routeId: string;
+  direction: Direction;
+
+  /** Where the Trip was last known to be — the stop *behind* its current
+   *  segment. A resolved fact, not a prediction; the sink for all of the
+   *  worker's present and future arrival-detection work. */
+  lastKnownStop: LastKnownStop;
+
+  /** Forward keyframes the web app interpolates across — the next N stops.
+   *  N is the worker's choice (the render "runway"), bounded by the 30-min
+   *  Trip Replacement Period (doc02.02): more stops = more resilience to a
+   *  late poll before the train must blink. */
+  upcoming: StopArrival[];
+
+  /** The worker's verdict on motion, when it has one. Absent until the worker
+   *  diffs snapshots to detect a stall (doc02.04); the web app renders
+   *  correctly without it, and its own lost-runway blink needs no worker input. */
+  status?: TripMotion;
+}
+
+export type TripMotion = "progressing" | "stalled";
+
+export interface LastKnownStop {
+  stopId: string; // directional stop_id, e.g. "127N"
+  /** When the Trip was at this stop (departed / observed). */
+  at: EpochMs;
+}
+
+export interface StopArrival {
+  stopId: string; // directional stop_id, e.g. "125N"
+  arrival: EpochMs;
+  departure: EpochMs | null;
+}
+
+// --- Baked map geometry (doc02.05) --------------------------------------
+// Produced at build time by @nyc-subwhere/geometry, consumed at runtime by
+// @nyc-subwhere/web. The worker does not read these; it only ships live
+// frames the web app renders on top of this geometry.
+
+export type LngLat = [number, number]; // [lon, lat] — GeoJSON/MapLibre order
+
+export type Direction = "N" | "S";
+
+export interface StationProperties {
+  stopId: string; // parent station id, e.g. "127"
+  name: string;
+  platforms: string[]; // directional stop_ids the realtime feed reports, e.g. ["127N", "127S"]
+  // Platform signage for each direction, derived from the MTA Subway Stations
+  // dataset by pairing the compass label with the terminal borough(s) of serving
+  // routes, e.g. "Uptown & The Bronx" / "Downtown & Brooklyn" — the rider-facing
+  // name for N / S. Absent when the build had no labels file or the station
+  // wasn't in it.
+  northLabel?: string;
+  southLabel?: string;
+}
+
+export interface SegmentProperties {
+  // A segment is one physical inter-station track, conflated across every Route
+  // that runs it (doc02.05), so shared trunks draw once instead of stacking.
+  routes: string[]; // all routeIds on this track, sorted (for inspection/interaction)
+  direction: Direction;
+  // Every distinct color among those routes — the truth, uncapped (Flatbush
+  // carries 4). The renderer decides how to draw what it can (doc01.03).
+  colors: string[];
+  // The first three, flattened into scalar props so MapLibre style expressions
+  // stay simple `get`s (array `at`/`length` on `get` fail the expression
+  // type-checker). colorCount is the true count and may exceed 3.
+  colorCount: number;
+  color0: string;
+  color1: string; // "" when colorCount < 2
+  color2: string; // "" when colorCount < 3
+}
+
+export interface PointGeometry {
+  type: "Point";
+  coordinates: LngLat;
+}
+export interface LineStringGeometry {
+  type: "LineString";
+  coordinates: LngLat[];
+}
+export interface Feature<G, P> {
+  type: "Feature";
+  geometry: G;
+  properties: P;
+}
+export interface FeatureCollection<G, P> {
+  type: "FeatureCollection";
+  features: Feature<G, P>[];
+}
+
+export type StationCollection = FeatureCollection<
+  PointGeometry,
+  StationProperties
+>;
+export type SegmentCollection = FeatureCollection<
+  LineStringGeometry,
+  SegmentProperties
+>;
+
+// --- Track junctions (doc02.07) -----------------------------------------
+// Where two tracks overlap (a crossing or a sustained near-parallel run). Facts only —
+// the pipeline finds the overlaps and who passes over, and assigns each segment a constant
+// grade level so overlapping floors resolve by depth rather than z-fighting.
+
+export interface TrackCrossing {
+  point: LngLat;
+  over: number; // segment raised over the crossing
+  under: number; // segment passing beneath
+}
+
+// A branch segment whose conformed end joins a `trunk` (a superset-routes segment) at
+// `attach` on the trunk centerline. The renderer trims the branch floor back to the
+// trunk footprint and fills the wedge with a gore, so the floors tile (no overlap).
+export interface TrackMerge {
+  branch: number;
+  trunk: number;
+  attach: LngLat;
+}
+
+export interface TrackGraph {
+  crossings: TrackCrossing[];
+  // Constant grade level per segment (doc02.07): a corridor sits one level above every
+  // corridor it crosses/overlaps (longest path over the overlap graph). The renderer draws
+  // higher levels in front so overlaps resolve in the depth buffer with no z-fighting and
+  // no geometric bump. Parallel to features; 0 is ground.
+  grade: number[];
+  // Antiparallel partner index for each segment (the opposite-direction half of the
+  // same corridor), or -1 if one-directional. The renderer fuses a pair into a single
+  // full-width track ribbon so there is no centerline seam. Parallel to features.
+  partner: number[];
+  // Whether each segment's [start, end] is an angled branch merging into a different-Route
+  // trunk (doc02.07). The renderer tapers the caret floor's width to a point at such an end
+  // so the branch tucks under the trunk like a railway turnout instead of piling on
+  // full-width and clashing. Parallel to features.
+  taper: [boolean, boolean][];
+  merges: TrackMerge[];
+  // The dissolved network outline (doc02.07): every Segment centerline buffered by the
+  // half-ribbon width and boolean-unioned, so merges/branches tile with no seam. Each
+  // entry is one polygon as [outerRing, ...holeRings]; the renderer extrudes each ring
+  // into a platform edge. Built in projected meters, stored as LngLat.
+  silhouette: LngLat[][][];
+}
+
+// --- Linear-reference index (motion) ------------------------------------
+// The web app lerps a Position Estimate along a Track by distance: given a
+// train between two stops, find their `dist`, interpolate, then walk `points`
+// via `cumDist`. Precomputed here so runtime touches no raw geometry.
+
+export interface TrackStop {
+  stopId: string; // directional stop_id, e.g. "127N"
+  dist: number; // meters along the polyline from its start
+}
+export interface Track {
+  routeId: string;
+  direction: Direction;
+  points: LngLat[];
+  cumDist: number[]; // meters at each point; length === points.length
+  stops: TrackStop[]; // ordered by dist
+}
+export interface TrackIndex {
+  feedVersion: string | null; // from feed_info.txt, for provenance
+  tracks: Track[];
+}

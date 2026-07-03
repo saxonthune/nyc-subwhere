@@ -1,0 +1,30 @@
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "files": {
+    "ignore": [
+      "**/dist/**",
+      "**/.wrangler/**",
+      "packages/web/src/assets/**",
+      "packages/geometry/merge-report.json",
+      "packages/geometry/debug/**",
+      "packages/worker/src/gtfs-proto.js",
+      "packages/worker/src/gtfs-proto.d.ts",
+      "data/**",
+      ".rhidoc.json"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true
+    }
+  },
+  "organizeImports": {
+    "enabled": true
+  }
+}

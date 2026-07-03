@@ -1,0 +1,22 @@
+{
+  "name": "@nyc-subwhere/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "gen-proto": "pbjs -t static-module -w es6 -p proto -o src/gtfs-proto.js proto/gtfs-realtime.proto proto/nyct-subway.proto && pbts -o src/gtfs-proto.d.ts src/gtfs-proto.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "protobufjs-cli": "^2.5.6",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.92.0"
+  },
+  "dependencies": {
+    "@nyc-subwhere/contract": "workspace:*",
+    "protobufjs": "^8.6.5"
+  }
+}
