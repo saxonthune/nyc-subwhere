@@ -69,3 +69,13 @@ MTA developer entry points and the specs behind the glossary terms.
   `TripUpdate` / `VehiclePosition` / `Alert` definitions the NYCT extension builds on.
 - [nyct-gtfs](https://github.com/Andrew-Dickinson/nyct-gtfs) — reference parser; useful for
   seeing which fields the subway feed actually populates.
+- **MTA Subway Stations** dataset (data.ny.gov, id `39hk-dx4f`;
+  `https://data.ny.gov/api/views/39hk-dx4f/rows.csv?accessType=DOWNLOAD`) — the only source of
+  **per-direction platform signage** ("Uptown"/"Downtown", "Last Stop", "Ferry"): columns
+  `North Direction Label` / `South Direction Label`, joined to our parent `stopId` by `GTFS Stop
+  ID`. Static `stops.txt` has no such field. 496 rows, full coverage as of feed 20260526.
+  Pipeline: `just fetch-stations` → `just gen-direction-labels` synthesizes the fuller pillar
+  phrasing ("Uptown & The Bronx", pairing the compass label with serving routes' terminal
+  boroughs) into the committed `packages/geometry/direction-labels.json`, which `build-geometry`
+  bakes into `StationProperties.northLabel/southLabel`. That JSON is hand-editable — the build's
+  source of truth for signage.

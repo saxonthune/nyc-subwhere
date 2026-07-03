@@ -15,12 +15,17 @@ const ITERATIONS = 2;
 // Only cut a corner whose turn exceeds this; near-collinear vertices are kept so straight runs
 // don't bloat with redundant points.
 const MIN_TURN_RAD = (4 * Math.PI) / 180;
+// Douglas–Peucker tolerance (metres) applied before smoothing. The heal-extension and taper
+// stubs, plus sub-metre noise in the raw GTFS shapes, survive Chaikin as visible kinks (they
+// are near-collinear, so the turn threshold keeps them); dropping any vertex within this
+// distance of the chord removes them first. 1 m is negligible against the 26 m ribbon.
+const SIMPLIFY_EPS_M = 1;
 
 export function smoothSegments(segments: SegmentCollection): SegmentCollection {
   const features = segments.features.map((f) => {
     const coords = f.geometry.coordinates;
     if (coords.length < 3) return f;
-    let pts: Pt[] = coords.map(projectNyc);
+    let pts = simplify(coords.map(projectNyc), SIMPLIFY_EPS_M);
     for (let it = 0; it < ITERATIONS; it++) pts = chaikin(pts);
     return {
       ...f,
@@ -28,6 +33,45 @@ export function smoothSegments(segments: SegmentCollection): SegmentCollection {
     };
   });
   return { ...segments, features };
+}
+
+// Douglas–Peucker: keep the endpoints and any vertex whose perpendicular distance to the
+// current chord exceeds eps, recursing on the two halves. Endpoints are preserved, so a
+// healed/tapered tip is never dropped.
+function simplify(pts: Pt[], eps: number): Pt[] {
+  const n = pts.length;
+  if (n < 3) return pts;
+  const keep = new Array<boolean>(n).fill(false);
+  keep[0] = true;
+  keep[n - 1] = true;
+  const stack: [number, number][] = [[0, n - 1]];
+  while (stack.length > 0) {
+    const [a, b] = stack.pop() as [number, number];
+    let maxD = -1;
+    let idx = -1;
+    for (let i = a + 1; i < b; i++) {
+      const d = perpDist(pts[i], pts[a], pts[b]);
+      if (d > maxD) {
+        maxD = d;
+        idx = i;
+      }
+    }
+    if (maxD > eps && idx > a) {
+      keep[idx] = true;
+      stack.push([a, idx], [idx, b]);
+    }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+function perpDist(p: Pt, a: Pt, b: Pt): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const l2 = dx * dx + dy * dy;
+  if (l2 === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2;
+  t = Math.min(1, Math.max(0, t));
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
 }
 
 // One Chaikin pass: keep the endpoints, and replace each cut corner with the two points a

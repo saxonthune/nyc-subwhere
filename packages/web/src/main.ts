@@ -1,6 +1,7 @@
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type {
+  DebugGraph,
   Direction,
   LngLat,
   RenderSnapshot,
@@ -10,10 +11,12 @@ import type {
   TrackIndex,
 } from "@nyc-subwhere/contract";
 import boroughsUrl from "./assets/boroughs.geojson?url";
+import debugGraphUrl from "./assets/debug-graph.json?url";
 import segmentsUrl from "./assets/segments.geojson?url";
 import stationsUrl from "./assets/stations.geojson?url";
 import trackGraphUrl from "./assets/track-graph.json?url";
 import trackIndexUrl from "./assets/track-index.json?url";
+import { HeaderPanel } from "./header-panel";
 import {
   InspectorPanel,
   type InspectorTarget,
@@ -43,6 +46,13 @@ const map = new maplibregl.Map({
   center: [-73.98, 40.75], // Manhattan
   zoom: 15,
   pitch: 55,
+  // MSAA lives on the GL context, which MapLibre owns — the Three custom layer
+  // shares this context, so setting antialias on THREE.WebGLRenderer is a no-op.
+  // On mobile tile-based GPUs this resolves on-tile, so it's nearly free.
+  antialias: true,
+  // Phones report devicePixelRatio 2-3; rendering the full scene + bloom at native
+  // DPR is the dominant per-frame fill cost. Cap it so the pixel count stays sane.
+  pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
   style: {
     version: 8,
     sources: {},
@@ -58,6 +68,8 @@ const map = new maplibregl.Map({
 
 map.addControl(new maplibregl.NavigationControl(), "top-right");
 
+document.body.append(new HeaderPanel());
+
 // Debug hook (doc02.05): expose the map so the junction screenshot harness can
 // jumpTo a named location deterministically. Harmless in production.
 (window as unknown as { __map?: maplibregl.Map }).__map = map;
@@ -69,12 +81,14 @@ map.on("load", async () => {
   // 3D route tubes + station pucks + platform boxes (doc02.03) in a Three.js
   // custom layer. Fetch the baked geometry once; it is static. Segments give
   // each station's track bearing so its box lies parallel to the track.
-  const [stationsRes, segmentsRes, boroughsRes, graphRes] = await Promise.all([
-    fetch(stationsUrl),
-    fetch(segmentsUrl),
-    fetch(boroughsUrl),
-    fetch(trackGraphUrl),
-  ]);
+  const [stationsRes, segmentsRes, boroughsRes, graphRes, debugRes] =
+    await Promise.all([
+      fetch(stationsUrl),
+      fetch(segmentsUrl),
+      fetch(boroughsUrl),
+      fetch(trackGraphUrl),
+      fetch(debugGraphUrl),
+    ]);
   const stationsGeo = (await stationsRes.json()) as {
     features: {
       geometry: { coordinates: [number, number] };
@@ -91,14 +105,25 @@ map.on("load", async () => {
     features: { geometry: { coordinates: BoroughPolygon } }[];
   };
   const graph = (await graphRes.json()) as TrackGraph;
+  const debug = (await debugRes.json()) as DebugGraph;
   const lngLats = stationsGeo.features.map((f) => f.geometry.coordinates);
   const segments = segmentsGeo.features.map((f) => ({
     points: f.geometry.coordinates,
     colors: f.properties.colors ?? [f.properties.color0],
   }));
   const boroughs = boroughsGeo.features.map((f) => f.geometry.coordinates);
-  const networkLayer = new NetworkLayer(lngLats, segments, graph, boroughs);
+  const networkLayer = new NetworkLayer(
+    lngLats,
+    segments,
+    graph,
+    boroughs,
+    debug,
+  );
   map.addLayer(networkLayer);
+  // Debug hook (doc02.07): expose the layer so the screenshot harness can drive cycleDebug() to
+  // capture a pipeline-stage centerline view deterministically. Harmless in production.
+  (window as unknown as { __networkLayer?: NetworkLayer }).__networkLayer =
+    networkLayer;
   // Screenshot harness readiness (doc02.05): the empty style is `loaded()` well
   // before this async handler builds the layer, so the harness gates on this flag
   // instead — set only once the track geometry is actually in the scene.
@@ -131,6 +156,20 @@ map.on("load", async () => {
       },
     },
   ];
+  // Debug views (doc02.07): one exclusive cycle over the pipeline's published debug layers —
+  // selecting one hides the tracks and draws that stage's centerlines as skinny pipes. Only shown
+  // when the bake published layers. The label reflects the active view; the menu re-renders on its
+  // own 1s tick, so mutating the label in place is enough.
+  if (debug.layers.length > 0) {
+    const debugOption = {
+      label: "Debug view: off",
+      onSelect: () => {
+        debugOption.label = `Debug view: ${networkLayer.cycleDebug()}`;
+        menu.requestUpdate();
+      },
+    };
+    menu.options = [...menu.options, debugOption];
+  }
   document.body.append(statsPanel, menu);
 
   // Inspector (doc01.03): station and segment metadata parallel the arrays handed

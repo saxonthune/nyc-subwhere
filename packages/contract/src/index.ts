@@ -132,37 +132,55 @@ export interface TrackCrossing {
   under: number; // segment passing beneath
 }
 
-// A branch segment whose conformed end joins a `trunk` (a superset-routes segment) at
-// `attach` on the trunk centerline. The renderer trims the branch floor back to the
-// trunk footprint and fills the wedge with a gore, so the floors tile (no overlap).
-export interface TrackMerge {
-  branch: number;
-  trunk: number;
-  attach: LngLat;
+// One grade level's baked fill triangles (doc02.07): the colored caret floor, triangulated in
+// the geometry bake so the renderer uploads it verbatim instead of rebuilding ribbon geometry.
+// Flat arrays, one entry per triangle vertex (3 per triangle):
+//   position  [lng, lat] pairs — the renderer projects to its meter frame and seats at surfaceY
+//   along     arc length from the corridor's south end   → caret shader aV
+//   across    signed offset from the centerline, ±halfWidth → caret shader aU
+//   segId     the owning segment index → palette (segment colors) and pick-back to the segment
+// One group per grade level; the renderer draws each with a depth offset (polygonOffset ∝
+// -level) so higher grades win the depth test where floors overlap.
+export interface TrackFillGroup {
+  level: number;
+  position: number[]; // 2 numbers per vertex
+  along: number[]; // 1 per vertex
+  across: number[]; // 1 per vertex
+  segId: number[]; // 1 per vertex
+}
+export interface TrackFill {
+  groups: TrackFillGroup[];
 }
 
 export interface TrackGraph {
   crossings: TrackCrossing[];
-  // Constant grade level per segment (doc02.07): a corridor sits one level above every
-  // corridor it crosses/overlaps (longest path over the overlap graph). The renderer draws
-  // higher levels in front so overlaps resolve in the depth buffer with no z-fighting and
-  // no geometric bump. Parallel to features; 0 is ground.
-  grade: number[];
-  // Antiparallel partner index for each segment (the opposite-direction half of the
-  // same corridor), or -1 if one-directional. The renderer fuses a pair into a single
-  // full-width track ribbon so there is no centerline seam. Parallel to features.
-  partner: number[];
-  // Whether each segment's [start, end] is an angled branch merging into a different-Route
-  // trunk (doc02.07). The renderer tapers the caret floor's width to a point at such an end
-  // so the branch tucks under the trunk like a railway turnout instead of piling on
-  // full-width and clashing. Parallel to features.
-  taper: [boolean, boolean][];
-  merges: TrackMerge[];
-  // The dissolved network outline (doc02.07): every Segment centerline buffered by the
-  // half-ribbon width and boolean-unioned, so merges/branches tile with no seam. Each
-  // entry is one polygon as [outerRing, ...holeRings]; the renderer extrudes each ring
-  // into a platform edge. Built in projected meters, stored as LngLat.
+  // The colored caret floors, baked as triangles grouped by grade level (doc02.07). Derived
+  // from the same per-corridor ribbon edges as `silhouette`, so fill and outline cannot drift.
+  fill: TrackFill;
+  // The dissolved network outline (doc02.07): every corridor centerline buffered by the
+  // half-ribbon width and boolean-unioned, so merges/branches tile with no seam. Each entry is
+  // one polygon as [outerRing, ...holeRings]; the renderer extrudes each ring into a platform
+  // edge. Built in projected meters, stored as LngLat.
   silhouette: LngLat[][][];
+}
+
+// --- Debug graph (doc02.07) ---------------------------------------------
+// Optional inspection artifact the pipeline publishes alongside the baked network: named layers
+// of polylines the web app can draw as skinny 3D pipes to see the geometry at intermediate
+// pipeline stages (e.g. corridor centerlines before vs after junction synthesis). Never consumed
+// by the live app path; a missing file just means no debug views are offered.
+
+export interface DebugPolyline {
+  coordinates: LngLat[];
+  color: string;
+}
+export interface DebugLayer {
+  id: string;
+  label: string; // menu-facing name
+  lines: DebugPolyline[];
+}
+export interface DebugGraph {
+  layers: DebugLayer[];
 }
 
 // --- Linear-reference index (motion) ------------------------------------

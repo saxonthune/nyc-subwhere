@@ -15,13 +15,21 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parse } from "csv-parse";
 import { parse as parseSync } from "csv-parse/sync";
-import { buildGraph } from "./build-graph";
+import { buildFill } from "./build-fill";
+import { assignGrade } from "./build-graph";
+import {
+  buildJunctions,
+  corridorsToDebugLines,
+  corridorsToFeatureCollection,
+} from "./build-junctions";
+import { buildRibbons } from "./build-ribbons";
 import { buildSegments } from "./build-segments";
-import { buildSilhouette } from "./build-silhouette";
+import { buildOutline } from "./build-silhouette";
 import { buildStations } from "./build-stations";
 import { buildTracks } from "./build-tracks";
+import { collapsePairs } from "./collapse-pairs";
+import { conformTracks } from "./conform-tracks";
 import { type Row, normalize } from "./gtfs-normalize";
-import { healEndpoints } from "./heal-endpoints";
 import { locateStops } from "./locate-stops";
 import { selectCanonical } from "./select-canonical";
 import { smoothSegments } from "./smooth-segments";
@@ -156,22 +164,46 @@ async function main(): Promise<void> {
     mergeReport,
     preMerge,
   } = buildSegments(located, normalized);
-  // Extend dangling branch endpoints onto the trunk they merge into (doc02.07), so the
-  // silhouette union closes the throat; the `taper` flags tell the renderer which ends are
-  // angled merges to narrow to a point (turnout) so the caret floors don't clash. Then Chaikin-
-  // smooth every centerline so curves render as arcs, not faceted squiggles (doc02.07).
-  const { segments: healed, taper } = healEndpoints(rawSegments);
-  const segments = smoothSegments(healed);
-  // Junction tessellation (doc02.07): merges/branches are dissolved by the silhouette
-  // union, not by reshaping branch tails, so segment geometry is left as-is. `merges`
-  // stays empty (the union supersedes per-branch conforming).
-  const tracks = buildTracks(located, feedVersion);
+  // Chaikin-smooth every centerline so curves render as arcs (doc02.07). Runs on the two-direction
+  // segments — the motion index conforms to them; junction synthesis happens later, on corridors.
+  const segments = smoothSegments(rawSegments);
+  // Conform the motion index to the drawn network (conform-tracks.ts): raw per-route shapes
+  // float off the merged tubes over the Manhattan Bridge, so snap each track onto the segment
+  // geometry actually rendered for it. Unaffected by the drawing collapse below.
+  const rawTracks = buildTracks(located, feedVersion);
+  const tracks = {
+    ...rawTracks,
+    tracks: conformTracks(rawTracks.tracks, segments),
+  };
   const stations = buildStations(canonical, normalized, directionLabels);
+  // Drawing pipeline (doc02.07), single source of truth: collapse each antiparallel pair to one
+  // corridor, synthesize junction geometry (author the merges/splits the GTFS data omits), grade
+  // them, offset to ribbon edges, then derive BOTH the caret fill (triangulated) and the outline
+  // (unioned) from those same edges so they cannot drift.
+  const preJunctionCorridors = collapsePairs(segments);
+  const corridors = buildJunctions(preJunctionCorridors);
+  const { graded, crossings } = assignGrade(corridors);
+  const ribbons = buildRibbons(graded);
   const graph = {
-    ...buildGraph(segments),
-    merges: [],
-    taper,
-    silhouette: buildSilhouette(segments, taper),
+    crossings,
+    fill: buildFill(ribbons),
+    silhouette: buildOutline(ribbons),
+  };
+  // Debug graph (doc02.07): centerlines before vs after junction synthesis, published beside the
+  // baked network so a menu toggle can draw them as skinny pipes to inspect the junction stage.
+  const debugGraph = {
+    layers: [
+      {
+        id: "centerlines-raw",
+        label: "Centerlines (raw)",
+        lines: corridorsToDebugLines(preJunctionCorridors),
+      },
+      {
+        id: "centerlines-junctioned",
+        label: "Centerlines (junctioned)",
+        lines: corridorsToDebugLines(corridors),
+      },
+    ],
   };
 
   // Selected canonical shapes as inspectable LineStrings (routes/direction/
@@ -202,6 +234,10 @@ async function main(): Promise<void> {
     writeFile(path.join(OUT_DIR, "stations.geojson"), JSON.stringify(stations)),
     writeFile(path.join(OUT_DIR, "track-index.json"), JSON.stringify(tracks)),
     writeFile(path.join(OUT_DIR, "track-graph.json"), JSON.stringify(graph)),
+    writeFile(
+      path.join(OUT_DIR, "debug-graph.json"),
+      JSON.stringify(debugGraph),
+    ),
     writeFile(REPORT_PATH, JSON.stringify(mergeReport, null, 2)),
     writeFile(
       path.join(DEBUG_DIR, "canonical.geojson"),
@@ -210,6 +246,12 @@ async function main(): Promise<void> {
     writeFile(
       path.join(DEBUG_DIR, "pre-merge-segments.geojson"),
       JSON.stringify(preMerge),
+    ),
+    // Corridor centerlines as drawn, before junction synthesis authors the merges/splits — a
+    // future web toggle can overlay this to see what the raw data gives us at a throat.
+    writeFile(
+      path.join(DEBUG_DIR, "pre-junction-corridors.geojson"),
+      JSON.stringify(corridorsToFeatureCollection(preJunctionCorridors)),
     ),
   ]);
 
