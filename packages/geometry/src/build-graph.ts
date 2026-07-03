@@ -18,10 +18,13 @@ import type { Corridor, GradedCorridor } from "./pipeline-types";
 const ENDPOINT_EXCLUDE_M = 12;
 // A crossing shallower than this is treated as a near-parallel artifact and skipped.
 const CROSS_MIN_ANGLE_DEG = 8;
-// Overlap leveling: two corridors whose centerlines run within this of each other (their
-// half-width 26 m ribbons overlap) for at least OVERLAP_MIN_M of length, but never actually
-// cross, still get a grade step so their floors don't z-fight along the shared run. Meters.
-const OVERLAP_DIST_M = 36;
+// Overlap leveling: two corridors whose centerlines run within this of each other for at least
+// OVERLAP_MIN_M of length, but never actually cross, still get a grade step so their floors don't
+// z-fight along the shared run. Must match the actual ribbon overlap distance — the ribbons are
+// ±26 m, so they overlap whenever centerlines are within 2·26 = 52 m; a tighter value leaves pairs
+// in the 36–52 m band coplanar and fighting. Held a hair under 52 so a bare edge-touch (~0 overlap)
+// does not force a needless grade step. Meters.
+const OVERLAP_DIST_M = 50;
 const OVERLAP_MIN_M = 40;
 // Endpoint merge (C1): a corridor endpoint landing within this of a different-route corridor's
 // centerline is a branch merging into a trunk. The trunk grades over the branch so the branch

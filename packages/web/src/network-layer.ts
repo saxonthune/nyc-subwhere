@@ -23,6 +23,15 @@ const TRAIN_LAYER = 1;
 // pipeline stage's raw geometry. Radius far under the 26 m half-ribbon so they read as thin.
 const DEBUG_PIPE_RADIUS = 3;
 
+// Pucks and trains sit physically above the track floors, but the floors grade-separate with
+// polygonOffset (track-render.ts) whose slope-dependent factor biases them far forward in the depth
+// buffer at grazing / zoomed-out angles — enough to beat an unoffset puck, so stations sink under
+// the tracks. Give pucks (and trains, above them) a stronger negative offset than the deepest floor
+// level (MAX_LEVEL 4 → factor -4, units -16) so they always win the depth test. Depth-only; no
+// geometry is moved.
+const PUCK_DEPTH_OFFSET: [number, number] = [-6, -24]; // [factor, units]
+const TRAIN_DEPTH_OFFSET: [number, number] = [-8, -32];
+
 type LngLat = [number, number];
 // One baked borough polygon (doc01.03 Basemap): rings[0] is the outer boundary,
 // any further rings are holes.
@@ -306,11 +315,10 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       puck.height,
       24,
     );
-    const mesh = new THREE.InstancedMesh(
-      geo,
-      this.lighting.stationMaterial(),
-      this.placements.length,
-    );
+    const mat = this.lighting.stationMaterial();
+    mat.polygonOffset = true;
+    [mat.polygonOffsetFactor, mat.polygonOffsetUnits] = PUCK_DEPTH_OFFSET;
+    const mesh = new THREE.InstancedMesh(geo, mat, this.placements.length);
     // Seat the puck so its top clears the top of the track (its wall tops).
     const centerY = trackTopY() + puck.clearanceOverTube - puck.height / 2;
     const m = new THREE.Matrix4();
@@ -495,11 +503,11 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       train.height,
       train.width,
     );
-    const core = new THREE.InstancedMesh(
-      coreGeo,
-      new THREE.MeshBasicMaterial(),
-      capacity,
-    );
+    const trainMat = new THREE.MeshBasicMaterial();
+    trainMat.polygonOffset = true;
+    [trainMat.polygonOffsetFactor, trainMat.polygonOffsetUnits] =
+      TRAIN_DEPTH_OFFSET;
+    const core = new THREE.InstancedMesh(coreGeo, trainMat, capacity);
     core.frustumCulled = false;
     core.userData.kind = "train";
     // Also on the train layer so the bloom effect can render it in isolation.
