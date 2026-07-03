@@ -193,7 +193,10 @@ map.on("load", async () => {
   for (const t of trackIndex.tracks) {
     for (const s of t.stops) {
       let set = routesByStop.get(s.stopId);
-      if (!set) routesByStop.set(s.stopId, (set = new Set()));
+      if (!set) {
+        set = new Set();
+        routesByStop.set(s.stopId, set);
+      }
       set.add(t.routeId);
     }
   }
@@ -214,7 +217,8 @@ map.on("load", async () => {
     const platforms = new Set(p.platforms);
     const routeIds = new Set<string>();
     for (const platform of p.platforms) {
-      for (const rid of routesByStop.get(platform) ?? []) routeIds.add(trunkOf(rid));
+      for (const rid of routesByStop.get(platform) ?? [])
+        routeIds.add(trunkOf(rid));
     }
     const routes = [...routeIds]
       .sort(routeSort)
@@ -259,7 +263,9 @@ map.on("load", async () => {
   const toTarget = (r: PickResult): InspectorTarget | null => {
     if (r.kind === "station") {
       const p = stationProps[r.stationIndex];
-      return p ? { kind: "station", title: p.name, station: stationView(p) } : null;
+      return p
+        ? { kind: "station", title: p.name, station: stationView(p) }
+        : null;
     }
     if (r.kind === "segment") {
       const p = segmentProps[r.segmentIndex];
@@ -344,7 +350,8 @@ map.on("load", async () => {
 
   // A train-inspector stop row selects its station: swap the panel and center it.
   inspector.addEventListener("station-select", (e) => {
-    const { stationIndex } = (e as CustomEvent<{ stationIndex: number }>).detail;
+    const { stationIndex } = (e as CustomEvent<{ stationIndex: number }>)
+      .detail;
     openPick = { kind: "station", stationIndex };
     syncInspector();
     easeToUpperThird(lngLats[stationIndex]);

@@ -447,4 +447,3 @@ function trainCenterY(): number {
   const puckTop = trackTopY() + puck.clearanceOverTube;
   return puckTop + train.clearance + train.height / 2;
 }
-

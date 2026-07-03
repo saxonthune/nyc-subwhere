@@ -303,8 +303,9 @@ switch (cmd) {
       for (let i = 0; i < c.length; i++) {
         const seg = i === 0 ? 0 : hav(c[i - 1], c[i]);
         console.log(
-          `  ${String(i).padStart(3)}  ${c[i][0].toFixed(5)},${c[i][1].toFixed(5)}` +
-            (i === 0 ? "" : `   +${Math.round(seg)}m`),
+          `  ${String(i).padStart(3)}  ${c[i][0].toFixed(5)},${c[i][1].toFixed(5)}${
+            i === 0 ? "" : `   +${Math.round(seg)}m`
+          }`,
         );
       }
     }

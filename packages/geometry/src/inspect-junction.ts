@@ -8,13 +8,14 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { LngLat, SegmentCollection, TrackGraph } from "@nyc-subwhere/contract";
+import type {
+  LngLat,
+  SegmentCollection,
+  TrackGraph,
+} from "@nyc-subwhere/contract";
 import { projectNyc } from "./geo";
 
-const ASSETS = path.resolve(
-  import.meta.dirname,
-  "../../web/src/assets",
-);
+const ASSETS = path.resolve(import.meta.dirname, "../../web/src/assets");
 
 type StationFC = {
   features: {
@@ -27,7 +28,11 @@ function load<T>(name: string): T {
   return JSON.parse(readFileSync(path.join(ASSETS, name), "utf8")) as T;
 }
 
-function distToSeg(p: [number, number], a: [number, number], b: [number, number]) {
+function distToSeg(
+  p: [number, number],
+  a: [number, number],
+  b: [number, number],
+) {
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
   const len2 = dx * dx + dy * dy || 1;
@@ -37,7 +42,7 @@ function distToSeg(p: [number, number], a: [number, number], b: [number, number]
 }
 
 function distToLine(p: [number, number], line: [number, number][]) {
-  let best = Infinity;
+  let best = Number.POSITIVE_INFINITY;
   for (let i = 0; i < line.length - 1; i++)
     best = Math.min(best, distToSeg(p, line[i], line[i + 1]));
   return best;
@@ -62,14 +67,18 @@ function main() {
     }
     console.log(`stations matching "${args[1]}":`);
     for (const h of hits)
-      console.log(`  ${h.properties.name} (${h.properties.stopId}) @ ${h.geometry.coordinates.join(", ")}`);
+      console.log(
+        `  ${h.properties.name} (${h.properties.stopId}) @ ${h.geometry.coordinates.join(", ")}`,
+      );
     center = hits[0].geometry.coordinates;
     if (args[2]) radius = Number(args[2]);
   } else if (args[0] === "--at") {
     center = [Number(args[1]), Number(args[2])];
     if (args[3]) radius = Number(args[3]);
   } else {
-    console.error("usage: --station <name> [radius] | --at <lng> <lat> [radius]");
+    console.error(
+      "usage: --station <name> [radius] | --at <lng> <lat> [radius]",
+    );
     process.exit(1);
   }
 
@@ -80,7 +89,9 @@ function main() {
   for (const f of stations.features) {
     const d = Math.hypot(...sub(projectNyc(f.geometry.coordinates), c));
     if (d <= radius)
-      console.log(`  ${Math.round(d)}m  ${f.properties.name} (${f.properties.stopId})`);
+      console.log(
+        `  ${Math.round(d)}m  ${f.properties.name} (${f.properties.stopId})`,
+      );
   }
 
   console.log("\nsegments nearby (index | routes | dir | colors):");

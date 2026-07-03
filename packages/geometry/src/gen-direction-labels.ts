@@ -11,8 +11,8 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { parse as parseSync } from "csv-parse/sync";
 import type { TrackIndex } from "@nyc-subwhere/contract";
+import { parse as parseSync } from "csv-parse/sync";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const STATIONS_CSV = path.join(REPO_ROOT, "data", "mta", "stations.csv");
@@ -108,7 +108,8 @@ async function main(): Promise<void> {
     const stops = track.stops;
     if (stops.length === 0) continue;
     const terminalParent = parentOf(stops[stops.length - 1].stopId);
-    const terminalBorough = BOROUGH_NAME[stationsCsv.get(terminalParent)?.borough ?? ""];
+    const terminalBorough =
+      BOROUGH_NAME[stationsCsv.get(terminalParent)?.borough ?? ""];
     if (!terminalBorough) continue;
     for (const stop of stops) {
       servedFor(parentOf(stop.stopId))[dir].add(terminalBorough);
@@ -118,7 +119,10 @@ async function main(): Promise<void> {
   const out: Record<string, { north?: string; south?: string }> = {};
   for (const [parent, csv] of stationsCsv) {
     const homeBorough = BOROUGH_NAME[csv.borough];
-    const s = served.get(parent) ?? { N: new Set<string>(), S: new Set<string>() };
+    const s = served.get(parent) ?? {
+      N: new Set<string>(),
+      S: new Set<string>(),
+    };
     const boroughsFor = (compass: string, set: Set<string>): string[] =>
       [...set]
         .filter((b) => b && b !== homeBorough && b !== compass)
@@ -135,7 +139,7 @@ async function main(): Promise<void> {
   const sorted: Record<string, { north?: string; south?: string }> = {};
   for (const key of Object.keys(out).sort()) sorted[key] = out[key];
 
-  await writeFile(LABELS_JSON, JSON.stringify(sorted, null, 2) + "\n");
+  await writeFile(LABELS_JSON, `${JSON.stringify(sorted, null, 2)}\n`);
 
   console.log(
     `direction-labels: ${Object.keys(sorted).length} stations written ` +

@@ -3,6 +3,7 @@
   "files": {
     "ignore": [
       "**/dist/**",
+      "**/.wrangler/**",
       "packages/web/src/assets/**",
       "packages/geometry/merge-report.json",
       "packages/geometry/debug/**",
