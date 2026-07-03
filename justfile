@@ -13,6 +13,15 @@ fetch-gtfs:
     curl -fL -o data/gtfs/google_transit.zip http://web.mta.info/developers/data/nyct/subway/google_transit.zip
     unzip -o data/gtfs/google_transit.zip -d data/gtfs
 
+# Download the MTA Subway Stations dataset (per-direction platform labels) into data/mta/ (gitignored)
+fetch-stations:
+    mkdir -p data/mta
+    curl -fL -o data/mta/stations.csv "https://data.ny.gov/api/views/39hk-dx4f/rows.csv?accessType=DOWNLOAD"
+
+# Generate committed direction-labels.json (compass + terminal-borough phrasing) from stations.csv + baked track-index.json
+gen-direction-labels:
+    pnpm --filter @nyc-subwhere/geometry gen-direction-labels
+
 # Build web map geometry assets from the GTFS bundle (needs `just fetch-gtfs` first)
 gen-geometry:
     pnpm --filter @nyc-subwhere/geometry build-geometry
@@ -71,6 +80,11 @@ dev-all:
     just dev &
     just worker &
     wait
+
+# Trigger the deploy workflow on a branch (defaults to current); code is deployed from that ref
+deploy branch=`git rev-parse --abbrev-ref HEAD`:
+    gh workflow run deploy.yml --ref {{branch}}
+    @echo "Dispatched deploy.yml on {{branch}} — watch: gh run watch"
 
 # Build all packages
 build:
