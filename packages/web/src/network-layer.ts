@@ -126,10 +126,12 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.pucks.userData.kind = "station";
     this.scene.add(this.pucks);
 
+    // No antialias here: this renderer adopts MapLibre's existing GL context, and
+    // MSAA is a context-creation attribute — it's requested on the Map constructor
+    // (main.ts) instead. Passing it to an already-created context does nothing.
     this.renderer = new THREE.WebGLRenderer({
       canvas: map.getCanvas(),
       context: gl,
-      antialias: true,
     });
     this.renderer.autoClear = false;
     this.glow.onAdd(this.renderer, this.scene);
@@ -213,7 +215,10 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
         }
       },
     );
-    this.map.triggerRepaint();
+    // No unconditional triggerRepaint here — that would repaint the full scene +
+    // bloom at max FPS forever, even on a static view. The animation loop is driven
+    // by setTrains (called every rAF frame from main.ts), which re-arms a repaint
+    // only while trains are actually moving. Camera interaction repaints on its own.
   }
 
   // A dark-navy disc surrounding the city, seated a little below ground level so
@@ -371,6 +376,11 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       },
       camDir,
     );
+
+    // Drive the render loop from here rather than an unconditional repaint in
+    // render(): request the next frame only while trains are visible and present,
+    // so an idle view (trains hidden or none live) stops repainting the scene.
+    if (this.trainsVisible && poses.length > 0) this.map.triggerRepaint();
   }
 
   // Hide/show live trains without dropping the poll+interpolate loop (doc01.03).
@@ -380,6 +390,9 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.trainsVisible = !this.trainsVisible;
     if (this.trains) this.trains.visible = this.trainsVisible;
     this.glow.setTrainGlowVisible(this.trainsVisible);
+    // The render loop idles when trains are hidden, so kick one repaint to draw the
+    // change (turning trains back on re-arms the loop via setTrains).
+    this.map.triggerRepaint();
   }
 
   // Enable/disable the scene bloom — the glow that lights the whole network. Off
@@ -388,6 +401,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   toggleLighting(): void {
     this.lightingEnabled = !this.lightingEnabled;
     this.glow.setEnabled(this.lightingEnabled);
+    this.map.triggerRepaint();
   }
 
   private rebuildTrains(capacity: number) {

@@ -1,37 +1,40 @@
-// Stage 4: track junctions (doc02.07). Finds where two tracks overlap — a true crossing or
-// a sustained near-parallel run — decides which passes over (busier route-set on top), and
-// assigns each segment a *constant* grade level: one above every segment it is over, via a
-// longest-path level over the overlap graph. The renderer draws higher levels in front, so
-// overlapping floors resolve in the depth buffer with no z-fighting and no geometric bump.
+// Stage 4: grade assignment (doc02.07). Finds where two corridors overlap — a true crossing, a
+// sustained near-parallel run, or an endpoint merging into a trunk — decides which passes over
+// (busier route-set on top), and assigns each corridor a *constant* grade level: one above every
+// corridor it is over, via a longest-path level over the overlap graph. The renderer draws higher
+// levels in front (polygonOffset), so overlapping floors resolve in the depth buffer with no
+// z-fighting and no geometric bump — and a branch tucks under its trunk at a merge by depth (C1),
+// so no taper geometry is needed.
+//
+// Operates on collapsed corridors (one per physical track); a corridor's `id` is its owned
+// segment index, so the reported crossings index segments.geojson for the junction inspector.
 
-import type {
-  LngLat,
-  SegmentCollection,
-  TrackCrossing,
-  TrackGraph,
-} from "@nyc-subwhere/contract";
+import type { LngLat, TrackCrossing } from "@nyc-subwhere/contract";
 import { projectNyc } from "./geo";
+import type { Corridor, GradedCorridor } from "./pipeline-types";
 
-// An intersection within this of either segment's endpoint is a merge/branch throat.
-// Kept small so merges (which the silhouette union tiles) still register a grade step and
-// don't z-fight, while genuine end-to-end joins at stations don't.
+// An intersection within this of either corridor's endpoint is a merge/branch throat, handled by
+// the endpoint-merge pass below rather than counted as a crossing.
 const ENDPOINT_EXCLUDE_M = 12;
 // A crossing shallower than this is treated as a near-parallel artifact and skipped.
 const CROSS_MIN_ANGLE_DEG = 8;
 // Overlap leveling: two corridors whose centerlines run within this of each other (their
-// half-width HALF_WIDTH_M=26 ribbons overlap) for at least OVERLAP_MIN_M of length, but
-// never actually cross, still get a grade step so their floors don't z-fight along the
-// shared run (near-parallel express/local). Meters.
+// half-width 26 m ribbons overlap) for at least OVERLAP_MIN_M of length, but never actually
+// cross, still get a grade step so their floors don't z-fight along the shared run. Meters.
 const OVERLAP_DIST_M = 36;
 const OVERLAP_MIN_M = 40;
-// Cap the grade stack (a deep overlap chain would otherwise pile up into many depth-offset
-// layers); beyond the cap, rare same-level overlaps just z-resolve arbitrarily.
+// Endpoint merge (C1): a corridor endpoint landing within this of a different-route corridor's
+// centerline is a branch merging into a trunk. The trunk grades over the branch so the branch
+// tucks under by draw order — the taper replacement. Half the ribbon width, so only a genuine
+// throat (endpoint inside the trunk footprint) counts, not a distant parallel line.
+const MERGE_NEAR_M = 13;
+// Cap the grade stack; beyond it rare same-level overlaps just z-resolve arbitrarily.
 const MAX_LEVEL = 4;
 
 type Pt = [number, number]; // meters
 
 interface Seg {
-  i: number;
+  id: number; // corridor id (= owned segment index)
   ll: LngLat[];
   m: Pt[];
   minX: number;
@@ -41,11 +44,12 @@ interface Seg {
   routes: string[];
 }
 
-export function buildGraph(
-  segments: SegmentCollection,
-): Omit<TrackGraph, "merges" | "silhouette" | "taper"> {
-  const segs: Seg[] = segments.features.map((f, i) => {
-    const ll = f.geometry.coordinates;
+export function assignGrade(corridors: Corridor[]): {
+  graded: GradedCorridor[];
+  crossings: TrackCrossing[];
+} {
+  const segs: Seg[] = corridors.map((c) => {
+    const ll = c.centerline;
     const m = ll.map(projectNyc);
     let minX = Number.POSITIVE_INFINITY;
     let minY = Number.POSITIVE_INFINITY;
@@ -57,12 +61,12 @@ export function buildGraph(
       if (x > maxX) maxX = x;
       if (y > maxY) maxY = y;
     }
-    return { i, ll, m, minX, minY, maxX, maxY, routes: f.properties.routes };
+    return { id: c.id, ll, m, minX, minY, maxX, maxY, routes: c.routes };
   });
 
-  // Grade relations (over must sit above under): a true crossing, or a sustained
-  // near-parallel overlap between two different-route corridors that never actually cross.
-  // Both feed the level DAG so any pair whose ribbons overlap gets separated in depth.
+  // Grade relations (over must sit above under): a true crossing, a sustained near-parallel
+  // overlap, or an endpoint merge. Both feed the level DAG so any overlapping pair separates in
+  // depth. Relations index into `segs` (dense corridor order), not corridor ids.
   const crossings: TrackCrossing[] = [];
   const relations: [number, number][] = [];
   for (let a = 0; a < segs.length; a++) {
@@ -78,22 +82,26 @@ export function buildGraph(
         continue;
       const hit = firstCrossing(sa, sb);
       if (hit) {
-        const [over, under] = priority(sa, sb);
-        crossings.push({ point: hit, over, under });
-        relations.push([over, under]);
+        crossings.push({
+          point: hit,
+          over: overId(sa, sb),
+          under: underId(sa, sb),
+        });
+        relations.push(overUnder(a, b, sa, sb));
         continue;
       }
       if (sameRoutes(sa, sb)) continue;
-      if (overlapLength(sa, sb, OVERLAP_DIST_M) >= OVERLAP_MIN_M) {
-        const [over, under] = priority(sa, sb);
-        relations.push([over, under]);
+      if (
+        endpointMerges(sa, sb) ||
+        overlapLength(sa, sb, OVERLAP_DIST_M) >= OVERLAP_MIN_M
+      ) {
+        relations.push(overUnder(a, b, sa, sb));
       }
     }
   }
 
   // Longest-path grade level: over must sit above under, so level[over] ≥ level[under] + 1.
-  // Relax to a fixed point (the priority order is total, so the over→under graph is acyclic
-  // and this converges). Height is level·step, held constant along each segment.
+  // Relax to a fixed point (priority is total, so the over→under graph is acyclic).
   const level = new Array<number>(segs.length).fill(0);
   for (let iter = 0; iter < segs.length; iter++) {
     let changed = false;
@@ -105,54 +113,29 @@ export function buildGraph(
     }
     if (!changed) break;
   }
-  const grade = level.map((l) => Math.min(l, MAX_LEVEL));
 
-  const partner = pairCorridors(segs, segments);
-  return { crossings, grade, partner };
+  const graded = corridors.map((c, i) => ({
+    ...c,
+    grade: Math.min(level[i], MAX_LEVEL),
+  }));
+  return { graded, crossings };
 }
 
-// Pair each segment with its antiparallel other-direction half: same route set,
-// opposite direction, endpoints reversed within PAIR_MATCH_M. The renderer fuses a pair
-// into one full-width ribbon (no centerline seam). One-directional segments get -1.
-const PAIR_MATCH_M = 30;
-function pairCorridors(segs: Seg[], segments: SegmentCollection): number[] {
-  const partner = new Array<number>(segs.length).fill(-1);
-  const dir = segments.features.map((f) => f.properties.direction);
-  const key = segs.map((s) => [...s.routes].sort().join(","));
-  const byKey = new Map<string, number[]>();
-  segs.forEach((s, i) => {
-    const k = `${key[i]}|${dir[i]}`;
-    const g = byKey.get(k);
-    if (g) g.push(i);
-    else byKey.set(k, [i]);
-  });
-  const start = (s: Seg) => s.m[0];
-  const finish = (s: Seg) => s.m[s.m.length - 1];
-  for (let i = 0; i < segs.length; i++) {
-    if (dir[i] !== "N" || partner[i] >= 0) continue;
-    const cands = byKey.get(`${key[i]}|S`) ?? [];
-    let best = -1;
-    let bestScore = PAIR_MATCH_M * 2;
-    for (const j of cands) {
-      if (partner[j] >= 0) continue;
-      const score =
-        dist(start(segs[i]), finish(segs[j])) +
-        dist(finish(segs[i]), start(segs[j]));
-      if (score < bestScore) {
-        bestScore = score;
-        best = j;
-      }
-    }
-    if (best >= 0) {
-      partner[i] = best;
-      partner[best] = i;
-    }
-  }
-  return partner;
+// Whether either corridor has an endpoint within MERGE_NEAR_M of the other's centerline — a
+// branch merging into a trunk. Different-route already ensured by the caller.
+function endpointMerges(sa: Seg, sb: Seg): boolean {
+  const near = (e: Pt, poly: Pt[]) =>
+    Math.sqrt(pointPolyD2(e, poly)) <= MERGE_NEAR_M;
+  return (
+    near(sa.m[0], sb.m) ||
+    near(sa.m[sa.m.length - 1], sb.m) ||
+    near(sb.m[0], sa.m) ||
+    near(sb.m[sb.m.length - 1], sa.m)
+  );
 }
 
-// The first transversal interior intersection of two segments: away from every
-// endpoint (else it is a merge) and steeper than the min angle (else near-parallel).
+// The first transversal interior intersection of two corridors: away from every endpoint (else
+// it is a merge) and steeper than the min angle (else near-parallel).
 function firstCrossing(sa: Seg, sb: Seg): LngLat | null {
   for (let i = 0; i < sa.m.length - 1; i++) {
     const a1 = sa.m[i];
@@ -183,15 +166,24 @@ function nearEndpoint(p: Pt, s: Seg): boolean {
   );
 }
 
-// Busier segment (more routes, then longer route list, then lexicographic) goes on
-// top. A stable rule, not a semantic claim about real elevation.
-function priority(sa: Seg, sb: Seg): [number, number] {
+// Busier corridor (more routes, then longer route list, then lexicographic) goes on top. A
+// stable rule, not a semantic claim about real elevation. `overUnder` returns the pair as
+// [over, under] in dense `segs` order (for the level DAG); `overId`/`underId` as corridor ids
+// (for the reported crossing).
+function overIsA(sa: Seg, sb: Seg): boolean {
   const ka = sa.routes.length;
   const kb = sb.routes.length;
-  if (ka !== kb) return ka > kb ? [sa.i, sb.i] : [sb.i, sa.i];
-  const ja = sa.routes.join(",");
-  const jb = sb.routes.join(",");
-  return ja <= jb ? [sa.i, sb.i] : [sb.i, sa.i];
+  if (ka !== kb) return ka > kb;
+  return sa.routes.join(",") <= sb.routes.join(",");
+}
+function overUnder(a: number, b: number, sa: Seg, sb: Seg): [number, number] {
+  return overIsA(sa, sb) ? [a, b] : [b, a];
+}
+function overId(sa: Seg, sb: Seg): number {
+  return overIsA(sa, sb) ? sa.id : sb.id;
+}
+function underId(sa: Seg, sb: Seg): number {
+  return overIsA(sa, sb) ? sb.id : sa.id;
 }
 
 function segIntersectT(a1: Pt, a2: Pt, b1: Pt, b2: Pt): number | null {
@@ -231,8 +223,8 @@ function sameRoutes(sa: Seg, sb: Seg): boolean {
   return a.every((r, i) => r === b[i]);
 }
 
-// Arc-length of sa that runs within maxDist of sb's polyline — how far the two ribbons
-// overlap side by side. Approximated by summing sa's edges whose midpoint is within range.
+// Arc-length of sa that runs within maxDist of sb's polyline — how far the two ribbons overlap
+// side by side. Approximated by summing sa's edges whose midpoint is within range.
 function overlapLength(sa: Seg, sb: Seg, maxDist: number): number {
   const maxD2 = maxDist * maxDist;
   let len = 0;

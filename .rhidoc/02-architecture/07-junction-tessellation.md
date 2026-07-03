@@ -88,20 +88,17 @@ straight run.
 
   Healing closes the *outline*, but the caret fills still overlap: at an acute Y-merge the
   branch, its trunk, and any third track all paint their own chevrons over the same throat,
-  which clash and z-fight (draw order picks one per pixel, but the seams tear). The fix is a
-  **turnout taper** — at a merging end the ribbon narrows from `halfWidth` to a point over a
-  fixed arc length, so the branch tucks *under* its trunk like a real switch instead of piling
-  on full-width. The healing pass flags which ends are angled merges; both the caret floor
-  (renderer) and the silhouette ribbon (bake, a manual variable-width polygon since
-  ClipperOffset only buffers at a constant delta) taper by the same profile, so the outline
-  hugs the narrowed fill rather than bulging into the gore beside it. This is how production
-  road renderers avoid overlap at junctions (trim each road back to the junction, fill it
-  once) adapted to equal-width transit ribbons. Two guards keep the taper from destroying a
-  short trunk-connector whose *both* ends merge (common at a dense junction): each end's ramp
-  is capped to a fraction of the segment length so a full-width core always survives (else the
-  two ramps meet and pinch the whole segment to a spindle that reads as an unfilled needle),
-  and the tip keeps a small non-zero width so its outline ends in a cap the trunk swallows
-  rather than a zero-area spike.
+  which clash and z-fight (draw order picks one per pixel, but the seams tear). The fix is the
+  **grade step** — `assign-grade` grades the busier trunk one level over the branch at the
+  throat (an endpoint-merge relation, alongside crossings and near-parallel overlaps), so the
+  branch fill tucks *under* its trunk by draw order (`polygonOffset`) rather than by geometry.
+  The ribbon therefore stays constant width — no taper profile, no tuning constants. (A
+  superseded design instead *narrowed* the branch ribbon to a point over a fixed arc length, a
+  manual variable-width polygon tapered in lockstep by both the bake and the renderer; that
+  duplication is exactly the drift the one-ribbon design removes.) The residual it does not
+  fix: two *same-route* corridors overlapping at the *same* grade in a dense throat still paint
+  competing chevrons — only a colour-labelled arrangement (fill and outline as one tiled
+  surface) would tile those, at the cost of a per-face caret flow-field.
 - **Grade-separated crossing** — floors are drawn *flat* (no height change at all); grade
   is a **draw order**, not an elevation. Each corridor gets a constant integer grade level:
   one above every corridor it overlaps, computed as a longest-path level over the overlap
@@ -117,45 +114,53 @@ straight run.
   wall lines. No `count===1` rail bookkeeping to decide which edge is exterior;
   the union already computed the exterior.
 
-## The color problem and the silhouette / fill split
+## The color problem: one ribbon, two derivations
 
 Union loses per-Segment identity: the dissolved surface no longer knows which
 Route(s) painted each point, but the caret shader (doc02.03) needs each corridor's
-own Route-set to stripe a shared trunk. Resolve by using the union for **silhouette
-only** and keeping the per-corridor ribbons for **fill**:
+own Route-set to stripe a shared trunk. The split is therefore in *what is derived*,
+not in *what geometry is built*: fill and outline both derive from **one** per-corridor
+ribbon, built once in the bake.
 
-- **Silhouette (union)** — drives the outline geometry (walls / platform edges)
-  and, if wanted, a base floor. This is the part that must tile seamlessly.
-- **Fill (per-corridor ribbons)** — the colored caret floors, drawn on top,
-  carrying each corridor's baked palette. Where two fills overlap at a merge throat they
-  clash (competing chevrons, z-fighting), so a merging branch's fill is **tapered** to a
-  point at the throat (see the turnout taper above) to keep the overlap small and read as a
-  switch; the silhouette ribbon tapers with it so the outline stays registered.
+- **Outline (silhouette)** — the boolean union of the ribbons. Tiles seamlessly;
+  its boundary rings are extruded into the walls. This is the geometry *fact*.
+- **Fill** — each corridor's *same* ribbon, triangulated on its own and carrying that
+  corridor's palette (via a per-vertex `segId` → segment colors). Color is a render
+  *policy* the shader applies to the fact.
 
-This is the right seam anyway: silhouette is a geometry *fact* (where the surface
-is), color is a render *policy* (how it is painted). The bake owns the first; the
-shader owns the second.
+The earlier design authored the ribbon *twice* — a manual variable-width polygon in the
+bake for the outline, and a separate frame/taper/fusion pass in the renderer for the fill —
+which drifted (a taper or fusion added to one but not the other left the colour short of the
+wall). Now `build-ribbons` emits the tagged left/right edges once; `build-fill` quad-strips
+them and `build-silhouette` caps + unions them, so the two share the exact boundary and the
+fill reaches the wall by construction. The renderer computes no ribbon geometry.
+
+Two workarounds the old split needed are gone:
+- **Partner-fusion** — a corridor was modelled as two antiparallel GTFS shapes and re-fused
+  at draw time. `collapse-pairs` now keeps one half as the corridor centerline (the other is
+  redundant; direction survives only as a pointer for picking), so there is nothing to fuse.
+- **Turnout taper** — the branch fill was narrowed to a point so overlapping chevrons at a
+  merge did not clash. Instead the merge throat gets a **grade step** (`assign-grade` grades
+  the busier trunk over the branch), so the branch tucks under by draw order (`polygonOffset`)
+  and the ribbon stays constant width. No taper profile, no tuning constants.
 
 ## Order of transformations
 
-The union constrains the pipeline order. Grade must be decided *before* the union,
-because it selects which ribbons are allowed to merge; merge-conforming disappears
-entirely.
-
 ```
-partner-fuse corridors        (N+S of one corridor → one centerline)
+build-segments               (two direction-keyed halves per physical track; feeds motion)
   → heal dangling endpoints   (extend a branch end along its tangent into the trunk)
   → smooth centerlines        (Chaikin corner-cutting → arcs, not faceted squiggles)
-  → assign grade per ribbon   (crossing over/under; baked fact)
-  → buffer each to a polygon  (halfWidth, chosen join type)
-  → group by grade
-  → union within each group   (dissolve overlaps → MultiPolygon)
-  → triangulate + take boundary
+  → collapse-pairs            (keep one half → one corridor centerline; drop the partner)
+  → assign-grade              (crossings · near-parallel overlaps · endpoint merges → grade)
+  → build-ribbons             (offset each centerline to tagged left/right edges — one source)
+       ├─ build-fill          (quad-strip the edges → triangles grouped by grade)
+       └─ build-silhouette    (cap + boolean-union the edges → outline rings)
 ```
 
-Contrast the superseded order (conform → crossings → elevation → partner), which
-reshaped branch tails *before* it knew the network silhouette — reconstructing the
-union one junction at a time.
+Heal and smooth run on the two-direction segments because the motion index conforms to them
+(conform-tracks); the drawing collapse happens after, so motion is untouched. Contrast the
+superseded order (conform → crossings → elevation → partner), which reshaped branch tails
+*before* it knew the network silhouette — reconstructing the union one junction at a time.
 
 ## Formulae
 

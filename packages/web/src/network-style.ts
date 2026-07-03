@@ -120,15 +120,12 @@ export const NETWORK_STYLE = {
     clearanceOverTube: 3,
   },
 
-  // 3D route track (doc02.03/doc02.07), a raised platform network built by the swappable
-  // TrackRenderer (track-render.ts). All meters. Each corridor draws one full-width caret
-  // floor `halfWidth` either side of its centerline at height `surfaceY`. The platform
-  // edges are the baked silhouette (doc02.07) — the whole network's centerlines buffered by
-  // `halfWidth` and boolean-unioned, so junctions dissolve with no seam — extruded down
-  // from `surfaceY` by `wallHeight` as glowing side faces. `halfWidth` MUST match
-  // HALF_WIDTH_M in build-silhouette.ts so floors and edges line up.
+  // 3D route track (doc02.03/doc02.07), a raised platform network. Both the caret floors and the
+  // platform edges are baked by @nyc-subwhere/geometry (doc02.07) and rendered verbatim: the
+  // renderer computes no ribbon geometry, so the ribbon half-width now lives solely in the bake
+  // (HALF_WIDTH_M, build-ribbons.ts) with nothing here to keep in sync. `surfaceY` seats the
+  // baked fill; each silhouette ring is extruded down from it by `wallHeight` as a glowing edge.
   track: {
-    halfWidth: 26,
     surfaceY: 6,
     wallHeight: 6,
     // Platform edge glow (doc02.07): the silhouette side faces are emissive so they bloom
@@ -139,12 +136,8 @@ export const NETWORK_STYLE = {
     edgeColor: "#dfefff",
     edgeEmissiveIntensity: 1.2,
     // Live trains ride this far to the left of travel — the center of their own
-    // direction's half-ribbon (roughly halfWidth/2), so a train sits on its track.
+    // direction's half-ribbon (roughly half the baked ribbon width), so a train sits on its track.
     trainOffsetM: 13,
-    // Turnout taper (doc02.07): at a branch end that merges into a trunk (baked `taper`
-    // flag), the caret floor narrows from `halfWidth` to a point over this arc length, so the
-    // branch tucks under the trunk like a switch instead of piling on full-width and clashing.
-    taperLenM: 34,
     // Caret marks on the floor (doc01.03): the ribbon is partitioned into chevron
     // cells by one bent coordinate `g = along + |across|·tan(bendDeg)`; each cell is
     // one palette color and the black caret line sits exactly on the cell boundary,

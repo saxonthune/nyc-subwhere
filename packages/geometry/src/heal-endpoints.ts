@@ -4,11 +4,9 @@
 // silhouette (build-silhouette) and the per-corridor caret floor (track-render) then both
 // stop there, so the throat shows a notch and the colour ends before the platform edge.
 // This pass extends each dangling endpoint onto the trunk it points at, so the two ribbons
-// fully overlap and the throat dissolves in the union with no special-casing downstream.
-//
-// It also reports, per segment, which ends are such angled merges (`taper`), so the renderer
-// can taper that end's caret floor to a point — the branch then tucks under the trunk like a
-// turnout instead of piling on full-width and clashing (doc02.07).
+// fully overlap and the throat dissolves in the union with no special-casing downstream. (A
+// merging end no longer needs a taper flag: the branch tucks under its trunk by grade draw
+// order, decided in assign-grade — doc02.07.)
 
 import type { SegmentCollection } from "@nyc-subwhere/contract";
 import { projectNyc, unprojectNyc } from "./geo";
@@ -23,13 +21,7 @@ const HEAL_MIN_M = 3;
 const HEAL_MAX_M = 32;
 const HEAL_FWD_COS = Math.cos((75 * Math.PI) / 180);
 
-export interface HealResult {
-  segments: SegmentCollection;
-  // Parallel to segments.features: whether [start, end] is an angled merge into a trunk.
-  taper: [boolean, boolean][];
-}
-
-export function healEndpoints(segments: SegmentCollection): HealResult {
+export function healEndpoints(segments: SegmentCollection): SegmentCollection {
   const lines = segments.features.map((f) =>
     f.geometry.coordinates.map(projectNyc),
   );
@@ -38,24 +30,19 @@ export function healEndpoints(segments: SegmentCollection): HealResult {
   );
   const bbox = lines.map(boundsOf);
 
-  const taper: [boolean, boolean][] = [];
   const features = segments.features.map((f, i) => {
     const line = lines[i];
-    if (line.length < 2) {
-      taper.push([false, false]);
-      return f;
-    }
+    if (line.length < 2) return f;
     const n = line.length;
     const head = mergeAt(line[0], line[1], i, lines, key, bbox);
     const tail = mergeAt(line[n - 1], line[n - 2], i, lines, key, bbox);
-    taper.push([head !== null, tail !== null]);
     if (!head?.extend && !tail?.extend) return f;
     const coords = [...f.geometry.coordinates];
     if (head?.extend) coords.unshift(unprojectNyc(head.extend));
     if (tail?.extend) coords.push(unprojectNyc(tail.extend));
     return { ...f, geometry: { ...f.geometry, coordinates: coords } };
   });
-  return { segments: { ...segments, features }, taper };
+  return { ...segments, features };
 }
 
 interface Merge {

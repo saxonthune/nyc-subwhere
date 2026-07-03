@@ -44,6 +44,13 @@ const map = new maplibregl.Map({
   center: [-73.98, 40.75], // Manhattan
   zoom: 15,
   pitch: 55,
+  // MSAA lives on the GL context, which MapLibre owns — the Three custom layer
+  // shares this context, so setting antialias on THREE.WebGLRenderer is a no-op.
+  // On mobile tile-based GPUs this resolves on-tile, so it's nearly free.
+  antialias: true,
+  // Phones report devicePixelRatio 2-3; rendering the full scene + bloom at native
+  // DPR is the dominant per-frame fill cost. Cap it so the pixel count stays sane.
+  pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
   style: {
     version: 8,
     sources: {},

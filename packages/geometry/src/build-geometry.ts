@@ -13,16 +13,17 @@
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { SegmentCollection } from "@nyc-subwhere/contract";
 import { parse } from "csv-parse";
 import { parse as parseSync } from "csv-parse/sync";
-import { buildGraph } from "./build-graph";
+import { buildFill } from "./build-fill";
+import { assignGrade } from "./build-graph";
+import { buildRibbons } from "./build-ribbons";
 import { buildSegments } from "./build-segments";
-import { buildSilhouette } from "./build-silhouette";
+import { buildOutline } from "./build-silhouette";
 import { buildStations } from "./build-stations";
 import { buildTracks } from "./build-tracks";
+import { collapsePairs } from "./collapse-pairs";
 import { conformTracks } from "./conform-tracks";
-import { projectNyc } from "./geo";
 import { type Row, normalize } from "./gtfs-normalize";
 import { healEndpoints } from "./heal-endpoints";
 import { locateStops } from "./locate-stops";
@@ -117,29 +118,6 @@ async function readFeedVersion(): Promise<string | null> {
   }
 }
 
-// Give both directions of each fused corridor the union of their [start, end] taper flags,
-// matching ends by proximity (the two directions run in opposite coordinate order, so segment
-// i's start co-locates with whichever partner end is nearest). Reading from the input flags
-// keeps it order-independent.
-function reconcileTaper(
-  segments: SegmentCollection,
-  partner: number[],
-  taper: [boolean, boolean][],
-): [boolean, boolean][] {
-  const ends = segments.features.map((f) => {
-    const c = f.geometry.coordinates;
-    return [projectNyc(c[0]), projectNyc(c[c.length - 1])] as const;
-  });
-  const d2 = (a: readonly [number, number], b: readonly [number, number]) =>
-    (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
-  return taper.map((t, i) => {
-    const p = partner[i];
-    if (p < 0) return [t[0], t[1]];
-    const near = (a: number) => (d2(ends[i][a], ends[p][0]) <= d2(ends[i][a], ends[p][1]) ? 0 : 1);
-    return [t[0] || taper[p][near(0)], t[1] || taper[p][near(1)]];
-  });
-}
-
 async function main(): Promise<void> {
   const [
     stopRows,
@@ -182,36 +160,29 @@ async function main(): Promise<void> {
     mergeReport,
     preMerge,
   } = buildSegments(located, normalized);
-  // Extend dangling branch endpoints onto the trunk they merge into (doc02.07), so the
-  // silhouette union closes the throat; the `taper` flags tell the renderer which ends are
-  // angled merges to narrow to a point (turnout) so the caret floors don't clash. Then Chaikin-
-  // smooth every centerline so curves render as arcs, not faceted squiggles (doc02.07).
-  const { segments: healed, taper } = healEndpoints(rawSegments);
-  const segments = smoothSegments(healed);
-  // Junction tessellation (doc02.07): merges/branches are dissolved by the silhouette
-  // union, not by reshaping branch tails, so segment geometry is left as-is. `merges`
-  // stays empty (the union supersedes per-branch conforming).
-  // Conform the motion index to the drawn network (conform-tracks.ts): raw
-  // per-route shapes float off the merged tubes over the Manhattan Bridge, so snap
-  // each track onto the segment geometry actually rendered for it.
+  // Extend dangling branch endpoints onto the trunk they merge into (doc02.07) so the outline
+  // union closes the throat, then Chaikin-smooth every centerline so curves render as arcs
+  // (doc02.07). Both run on the two-direction segments — the motion index conforms to them.
+  const segments = smoothSegments(healEndpoints(rawSegments));
+  // Conform the motion index to the drawn network (conform-tracks.ts): raw per-route shapes
+  // float off the merged tubes over the Manhattan Bridge, so snap each track onto the segment
+  // geometry actually rendered for it. Unaffected by the drawing collapse below.
   const rawTracks = buildTracks(located, feedVersion);
   const tracks = {
     ...rawTracks,
     tracks: conformTracks(rawTracks.tracks, segments),
   };
   const stations = buildStations(canonical, normalized, directionLabels);
-  // A corridor's two directions merge at the same junctions, so their taper flags must agree:
-  // the silhouette unions both direction ribbons while the caret fill draws only one (the
-  // partner is skipped), so a taper on one direction alone narrows the fill but leaves the
-  // union full-width — the colour then stops short of the platform edge. Reconcile each pair to
-  // the union of its flags (matched by co-located ends) before baking silhouette + fill.
-  const base = buildGraph(segments);
-  const taperFused = reconcileTaper(segments, base.partner, taper);
+  // Drawing pipeline (doc02.07), single source of truth: collapse each antiparallel pair to one
+  // corridor, grade them, offset to ribbon edges, then derive BOTH the caret fill (triangulated)
+  // and the outline (unioned) from those same edges so they cannot drift.
+  const corridors = collapsePairs(segments);
+  const { graded, crossings } = assignGrade(corridors);
+  const ribbons = buildRibbons(graded);
   const graph = {
-    ...base,
-    merges: [],
-    taper: taperFused,
-    silhouette: buildSilhouette(segments, taperFused),
+    crossings,
+    fill: buildFill(ribbons),
+    silhouette: buildOutline(ribbons),
   };
 
   // Selected canonical shapes as inspectable LineStrings (routes/direction/
