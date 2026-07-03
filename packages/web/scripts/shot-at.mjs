@@ -3,10 +3,19 @@ import { chromium } from "playwright";
 // Deterministic screenshot of the running dev server at a camera pose (doc02.05):
 // navigates the map via the window.__map debug hook, so a junction can be inspected
 // by location. Paste the `shot:` line from the Advanced Stats panel straight in.
-//   node shot-at.mjs <out.png> <lng> <lat> [zoom=17] [pitch=45] [bearing=0]
+//   node shot-at.mjs <out.png> <lng> <lat> [zoom=17] [pitch=45] [bearing=0] [debugCycles=0]
 //   just shot <out.png> <lng> <lat> [zoom] [pitch] [bearing]
-const [out, lng, lat, zoom = "17", pitch = "45", bearing = "0"] =
-  process.argv.slice(2);
+// debugCycles calls the network layer's cycleDebug() that many times before the shot,
+// so a pipeline-stage centerline view (doc02.07) can be captured (1 = first debug layer).
+const [
+  out,
+  lng,
+  lat,
+  zoom = "17",
+  pitch = "45",
+  bearing = "0",
+  debugCycles = "0",
+] = process.argv.slice(2);
 
 if (!out || !lng || !lat) {
   console.error(
@@ -38,6 +47,9 @@ await page.evaluate(
   },
   [Number(lng), Number(lat), Number(zoom), Number(pitch), Number(bearing)],
 );
+
+for (let i = 0; i < Number(debugCycles); i++)
+  await page.evaluate(() => window.__networkLayer.cycleDebug());
 
 // The custom layer calls triggerRepaint() every frame, so the map never fires
 // 'idle' — wait a fixed settle for the new camera matrix + a few redraws instead.

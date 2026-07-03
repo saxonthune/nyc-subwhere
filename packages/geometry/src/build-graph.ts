@@ -42,6 +42,7 @@ interface Seg {
   maxX: number;
   maxY: number;
   routes: string[];
+  len: number; // projected centerline length (trunk-vs-branch tiebreak)
 }
 
 export function assignGrade(corridors: Corridor[]): {
@@ -55,13 +56,15 @@ export function assignGrade(corridors: Corridor[]): {
     let minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY;
     let maxY = Number.NEGATIVE_INFINITY;
+    let len = 0;
     for (const [x, y] of m) {
       if (x < minX) minX = x;
       if (y < minY) minY = y;
       if (x > maxX) maxX = x;
       if (y > maxY) maxY = y;
     }
-    return { id: c.id, ll, m, minX, minY, maxX, maxY, routes: c.routes };
+    for (let i = 1; i < m.length; i++) len += dist(m[i - 1], m[i]);
+    return { id: c.id, ll, m, minX, minY, maxX, maxY, routes: c.routes, len };
   });
 
   // Grade relations (over must sit above under): a true crossing, a sustained near-parallel
@@ -90,11 +93,16 @@ export function assignGrade(corridors: Corridor[]): {
         relations.push(overUnder(a, b, sa, sb));
         continue;
       }
+      // A detected merge forces a winner even between same-route corridors (a branch of one route
+      // joining its own trunk), so the throat always has a clean occluder and never coplanar-fights.
+      // The overlap-leveling relation stays different-route only (parallel same-route runs like a
+      // local beside its own express are left to z-resolve, not forcibly stacked).
+      if (endpointMerges(sa, sb)) {
+        relations.push(overUnder(a, b, sa, sb));
+        continue;
+      }
       if (sameRoutes(sa, sb)) continue;
-      if (
-        endpointMerges(sa, sb) ||
-        overlapLength(sa, sb, OVERLAP_DIST_M) >= OVERLAP_MIN_M
-      ) {
+      if (overlapLength(sa, sb, OVERLAP_DIST_M) >= OVERLAP_MIN_M) {
         relations.push(overUnder(a, b, sa, sb));
       }
     }
@@ -174,6 +182,9 @@ function overIsA(sa: Seg, sb: Seg): boolean {
   const ka = sa.routes.length;
   const kb = sb.routes.length;
   if (ka !== kb) return ka > kb;
+  // Same route count (incl. a same-route branch/trunk): the longer corridor is the through trunk,
+  // so it sits on top and the shorter branch tucks under it.
+  if (Math.abs(sa.len - sb.len) > 1) return sa.len > sb.len;
   return sa.routes.join(",") <= sb.routes.join(",");
 }
 function overUnder(a: number, b: number, sa: Seg, sb: Seg): [number, number] {

@@ -164,6 +164,25 @@ export interface TrackGraph {
   silhouette: LngLat[][][];
 }
 
+// --- Debug graph (doc02.07) ---------------------------------------------
+// Optional inspection artifact the pipeline publishes alongside the baked network: named layers
+// of polylines the web app can draw as skinny 3D pipes to see the geometry at intermediate
+// pipeline stages (e.g. corridor centerlines before vs after junction synthesis). Never consumed
+// by the live app path; a missing file just means no debug views are offered.
+
+export interface DebugPolyline {
+  coordinates: LngLat[];
+  color: string;
+}
+export interface DebugLayer {
+  id: string;
+  label: string; // menu-facing name
+  lines: DebugPolyline[];
+}
+export interface DebugGraph {
+  layers: DebugLayer[];
+}
+
 // --- Linear-reference index (motion) ------------------------------------
 // The web app lerps a Position Estimate along a Track by distance: given a
 // train between two stops, find their `dist`, interpolate, then walk `points`

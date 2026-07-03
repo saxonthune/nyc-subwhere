@@ -26,6 +26,7 @@ export class StatsPanel extends LitElement {
     error: { attribute: false },
     estimator: { attribute: false },
     camera: { attribute: false },
+    copied: { state: true },
   };
   declare open: boolean;
   declare tally: DropTally | null;
@@ -35,6 +36,8 @@ export class StatsPanel extends LitElement {
   declare estimator: EstimatorReport | null;
   /** Live camera pose, refreshed on map move while open — for the shot-at harness. */
   declare camera: CameraReadout | null;
+  /** Momentary "copied" flag for the shot line's click-to-copy affordance. */
+  declare copied: boolean;
 
   constructor() {
     super();
@@ -43,6 +46,7 @@ export class StatsPanel extends LitElement {
     this.error = null;
     this.estimator = null;
     this.camera = null;
+    this.copied = false;
   }
 
   static styles = css`
@@ -94,14 +98,43 @@ export class StatsPanel extends LitElement {
       white-space: pre;
       color: #d6d6d6;
     }
+    /* Panel text isn't selectable (body-wide user-select: none, kept for the
+       mobile long-press callout). The shot line is the one value worth copying,
+       so make it a one-tap copy target instead. */
+    .shot {
+      cursor: pointer;
+      border-radius: 3px;
+      padding: 0 2px;
+      margin: 0 -2px;
+    }
+    .shot:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .shot.copied {
+      color: #7ee787;
+    }
   `;
 
   private close() {
     this.open = false;
   }
 
+  private async copyShot(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      this.copied = true;
+      setTimeout(() => {
+        this.copied = false;
+      }, 1200);
+    } catch {
+      // Clipboard denied (insecure context / permissions) — leave the line as-is.
+    }
+  }
+
   render() {
     if (!this.open) return nothing;
+    const c = this.camera;
+    const shot = c ? shotArgs(c) : "";
     return html`
       <div class="panel">
         <header>
@@ -110,8 +143,15 @@ export class StatsPanel extends LitElement {
             ×
           </button>
         </header>
-        <pre class="body">${[
-          cameraLines(this.camera),
+        <pre class="body">${c ? html`${centerLine(c)}
+<span
+              class="shot ${this.copied ? "copied" : ""}"
+              title="Click to copy"
+              @click=${() => this.copyShot(shot)}
+              >shot: ${shot}${this.copied ? "  ✓ copied" : ""}</span
+            >
+
+` : nothing}${[
           this.tally ? lines(this.tally) : "…",
           estimatorLines(this.estimator),
           errorLines(this.error),
@@ -123,15 +163,16 @@ export class StatsPanel extends LitElement {
   }
 }
 
-function cameraLines(c: CameraReadout | null): string {
-  if (!c) return "";
+function centerLine(c: CameraReadout): string {
   const n = (v: number, d: number) => v.toFixed(d);
-  // Second line is paste-ready args for `just shot <out> …` so a spot can be
-  // handed straight to the screenshot harness.
-  return [
-    `center: ${n(c.lng, 5)}, ${n(c.lat, 5)}  z${n(c.zoom, 2)} p${Math.round(c.pitch)} b${Math.round(c.bearing)}`,
-    `shot: ${n(c.lng, 5)} ${n(c.lat, 5)} ${n(c.zoom, 2)} ${Math.round(c.pitch)} ${Math.round(c.bearing)}`,
-  ].join("\n");
+  return `center: ${n(c.lng, 5)}, ${n(c.lat, 5)}  z${n(c.zoom, 2)} p${Math.round(c.pitch)} b${Math.round(c.bearing)}`;
+}
+
+// Paste-ready args for `just shot <out> …` so a spot can be handed straight to
+// the screenshot harness.
+function shotArgs(c: CameraReadout): string {
+  const n = (v: number, d: number) => v.toFixed(d);
+  return `${n(c.lng, 5)} ${n(c.lat, 5)} ${n(c.zoom, 2)} ${Math.round(c.pitch)} ${Math.round(c.bearing)}`;
 }
 
 function lines(t: DropTally): string {

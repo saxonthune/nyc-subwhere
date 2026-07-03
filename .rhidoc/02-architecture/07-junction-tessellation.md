@@ -148,19 +148,46 @@ Two workarounds the old split needed are gone:
 
 ```
 build-segments               (two direction-keyed halves per physical track; feeds motion)
-  → heal dangling endpoints   (extend a branch end along its tangent into the trunk)
   → smooth centerlines        (Chaikin corner-cutting → arcs, not faceted squiggles)
   → collapse-pairs            (keep one half → one corridor centerline; drop the partner)
+  → build-junctions           (cluster ends → trunk; extend each branch's arc until it meets it)
   → assign-grade              (crossings · near-parallel overlaps · endpoint merges → grade)
   → build-ribbons             (offset each centerline to tagged left/right edges — one source)
        ├─ build-fill          (quad-strip the edges → triangles grouped by grade)
        └─ build-silhouette    (cap + boolean-union the edges → outline rings)
 ```
 
-Heal and smooth run on the two-direction segments because the motion index conforms to them
-(conform-tracks); the drawing collapse happens after, so motion is untouched. Contrast the
-superseded order (conform → crossings → elevation → partner), which reshaped branch tails
-*before* it knew the network silhouette — reconstructing the union one junction at a time.
+Smooth runs on the two-direction segments because the motion index conforms to them
+(conform-tracks). Junction synthesis is drawing-only, so it runs *after* collapse — on the
+single-centerline corridors, downstream of motion, which never sees the authored curves.
+Contrast the superseded order (conform → crossings → elevation → partner), which reshaped
+branch tails *before* it knew the network silhouette — reconstructing the union one junction
+at a time.
+
+**Junction synthesis (build-junctions).** GTFS ships one polyline per route+direction and no
+junction *topology* — a branch and its trunk are independent lines whose ends land near a common
+point, short of and at an angle to the trunk, never sharing a node. build-junctions builds that
+topology, then closes each gap by **extending the branch, not reshaping it**: (A) cluster corridor
+endpoints of different route-sets within a tolerance — each cluster of ≥2 route-sets is a junction
+whose trunk is the busiest incident corridor; (B) for each branch end that points at the trunk, fit
+a circle to the branch's last few vertices — the arc it is *already on* — and march forward along
+that circle (keeping its curvature) until the path reaches the trunk centerline, then snap the final
+point onto the trunk so the centerlines touch. The branch's real geometry is preserved in full; only
+the missing connector is grown. A near-straight branch extends as a ray; if the arc diverges (never
+approaches the trunk) a straight segment closes the gap; a true terminus (trunk behind the end) is
+left untouched. The extended branch reaches the trunk tangent to its own path, so the ribbons overlap
+where they meet and the union fills the apex; the branches splay apart downstream (the open wedge
+between diverging tracks is correct). Two earlier attempts were wrong for instructive reasons: the
+original `heal-endpoints` nudged one endpoint toward the nearest trunk locally (no shared node); a
+trim-and-regrow that authored a fresh **biarc** onto the trunk tangent *discarded* the branch's real
+shape and forced a foreign heading, which the debug centerline view exposed as a wandering S. Keeping
+the branch's own arc and only growing the tail is what reads as natural.
+
+**Debug graph.** The bake also publishes `debug-graph.json` beside the network: named layers of
+polylines (currently the corridor centerlines *before* and *after* junction synthesis) the web
+app can draw as skinny 3D pipes, via a menu toggle that hides the tracks. It is inspection only —
+a missing file just means no debug views are offered — and exists to make a pipeline stage's raw
+geometry directly visible when tuning junctions.
 
 ## Formulae
 

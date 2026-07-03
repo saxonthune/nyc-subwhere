@@ -1,3 +1,4 @@
+import type { DebugGraph } from "@nyc-subwhere/contract";
 import maplibregl from "maplibre-gl";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -17,6 +18,10 @@ import type { TrainPose } from "./trains";
 // three.js render layer the train boxes also live on, so the bloom effect can
 // render just the trains by restricting the camera to it (doc02.03).
 const TRAIN_LAYER = 1;
+
+// Debug centerline pipes (doc02.07): skinny tubes drawn in place of the tracks to inspect a
+// pipeline stage's raw geometry. Radius far under the 26 m half-ribbon so they read as thin.
+const DEBUG_PIPE_RADIUS = 3;
 
 type LngLat = [number, number];
 // One baked borough polygon (doc01.03 Basemap): rings[0] is the outer boundary,
@@ -82,16 +87,22 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private readonly segments: TrackSegment[];
   private readonly graph: TrackGraph;
   private readonly boroughs: BoroughPolygon[];
+  private readonly debug: DebugGraph;
+  // One merged pipe mesh per debug layer, hidden until selected; -1 = none active (tracks shown).
+  private readonly debugMeshes: { label: string; mesh: THREE.Mesh }[] = [];
+  private activeDebug = -1;
 
   constructor(
     stations: LngLat[],
     segments: TrackSegment[],
     graph: TrackGraph,
     boroughs: BoroughPolygon[] = [],
+    debug: DebugGraph = { layers: [] },
   ) {
     this.segments = segments;
     this.graph = graph;
     this.boroughs = boroughs;
+    this.debug = debug;
     this.placements = stations.map((s) => this.toLocal(s));
   }
 
@@ -125,6 +136,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.pucks = this.buildPucks();
     this.pucks.userData.kind = "station";
     this.scene.add(this.pucks);
+    this.buildDebugLayers();
 
     // No antialias here: this renderer adopts MapLibre's existing GL context, and
     // MSAA is a context-creation attribute — it's requested on the Map constructor
@@ -402,6 +414,69 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.lightingEnabled = !this.lightingEnabled;
     this.glow.setEnabled(this.lightingEnabled);
     this.map.triggerRepaint();
+  }
+
+  // Build one merged skinny-pipe mesh per debug layer (doc02.07), self-lit and colored per line,
+  // hidden until cycleDebug selects it. Seated at the track top so a centerline reads at the same
+  // height as the platform it replaces. Degenerate points are dropped so the tube stays finite.
+  private buildDebugLayers(): void {
+    const y = trackTopY();
+    for (const layer of this.debug.layers) {
+      const geos: THREE.BufferGeometry[] = [];
+      for (const line of layer.lines) {
+        const pts: THREE.Vector3[] = [];
+        for (const ll of line.coordinates) {
+          const { x, z } = this.toLocal(ll);
+          const prev = pts[pts.length - 1];
+          if (prev && prev.x === x && prev.z === z) continue;
+          pts.push(new THREE.Vector3(x, y, z));
+        }
+        if (pts.length < 2) continue;
+        const curve = new THREE.CatmullRomCurve3(pts);
+        const tube = new THREE.TubeGeometry(
+          curve,
+          Math.max(2, (pts.length - 1) * 3),
+          DEBUG_PIPE_RADIUS,
+          6,
+          false,
+        );
+        const c = new THREE.Color(line.color);
+        const n = tube.getAttribute("position").count;
+        const colors = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) colors.set([c.r, c.g, c.b], i * 3);
+        tube.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+        geos.push(tube);
+      }
+      if (geos.length === 0) continue;
+      const merged = mergeGeometries(geos, false);
+      for (const g of geos) g.dispose();
+      const mesh = new THREE.Mesh(
+        merged,
+        new THREE.MeshBasicMaterial({ vertexColors: true }),
+      );
+      mesh.frustumCulled = false;
+      mesh.visible = false;
+      this.scene.add(mesh);
+      this.debugMeshes.push({ label: layer.label, mesh });
+    }
+  }
+
+  // Advance the exclusive debug view: none → layer 0 → … → last → none. While a layer is active the
+  // baked tracks (fill + walls + carets) and live trains are hidden so only the centerline pipes
+  // show. Returns the active layer's label, or "off". Not persisted; a reload starts on the tracks.
+  cycleDebug(): string {
+    this.activeDebug =
+      this.activeDebug + 1 >= this.debugMeshes.length
+        ? -1
+        : this.activeDebug + 1;
+    const active = this.activeDebug >= 0;
+    this.debugMeshes.forEach((d, i) => {
+      d.mesh.visible = i === this.activeDebug;
+    });
+    for (const obj of this.trackBuild?.objects ?? []) obj.visible = !active;
+    if (this.trains) this.trains.visible = active ? false : this.trainsVisible;
+    this.map.triggerRepaint();
+    return active ? this.debugMeshes[this.activeDebug].label : "off";
   }
 
   private rebuildTrains(capacity: number) {
