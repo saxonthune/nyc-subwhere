@@ -189,6 +189,16 @@ export const NETWORK_STYLE = {
       scaleCross: 0.6,
       opacity: 0.75,
     },
+    // Cel-style silhouette outline (train-glow.ts TrainOutlinePass): a screen-space
+    // pass inks every pixel within `widthPx` outside the train silhouettes, drawn
+    // after the glow composites so the dark rim reads over the bloom. Screen-space
+    // keeps the width uniform at every camera angle and free of depth conflicts
+    // (an inverted hull had both problems). widthPx is in device pixels.
+    outline: {
+      enabled: true,
+      widthPx: 3,
+      color: "#000000",
+    },
   },
 };
 

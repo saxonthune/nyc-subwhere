@@ -24,6 +24,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Cheap gate against direct pushes that skipped PR CI.
+      - run: pnpm typecheck
+
       # Worker serves packages/web/dist via its ASSETS binding, so build the web app first.
       - run: pnpm --filter @nyc-subwhere/web build
 

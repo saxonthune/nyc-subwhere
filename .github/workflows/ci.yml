@@ -24,3 +24,7 @@ jobs:
       - run: pnpm typecheck
 
       - run: pnpm --filter @nyc-subwhere/web build
+
+      # Validate the worker + wrangler config without credentials, so a broken
+      # wrangler.toml or worker-only error fails the PR instead of the deploy.
+      - run: pnpm --filter @nyc-subwhere/worker exec wrangler deploy --dry-run
