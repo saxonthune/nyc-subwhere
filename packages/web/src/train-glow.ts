@@ -40,7 +40,9 @@ export interface GlowEffect {
   // Wrap the scene render. Mesh strategies just call renderScene(); a post-process
   // strategy renders to targets and composites. renderScene() renders the whole
   // three scene; renderTrains() renders only the train boxes (the bloom source),
-  // both to the current render target.
+  // both to the current render target. The silhouette outline (TrainOutlinePass)
+  // is not a glow concern: NetworkLayer runs it after this returns, so it always
+  // draws over whatever the strategy composited.
   render(renderScene: () => void, renderTrains: () => void): void;
   dispose(): void;
 }
@@ -322,6 +324,105 @@ class BloomGlow implements GlowEffect {
     this.blur.dispose();
     this.composite.dispose();
   }
+}
+
+// Screen-space cel outline for the trains (NETWORK_STYLE.train.outline). The
+// trains alone are rendered to an offscreen mask (alpha 0 background, alpha 1
+// where a train covers the pixel); a fullscreen pass then inks every pixel that
+// is OUTSIDE the mask but within `widthPx` of it, alpha-blended over the screen.
+// NetworkLayer runs this after the glow effect's render, so the rim draws over
+// the bloom. Screen-space rather than outline geometry on purpose: the width is
+// uniform in pixels at every camera angle, and with no depth test nothing (e.g. a
+// station puck the train straddles) can punch holes in the rim.
+export class TrainOutlinePass {
+  private rtMask?: THREE.WebGLRenderTarget;
+  private readonly size = new THREE.Vector2();
+  private readonly quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
+  private readonly quadScene = new THREE.Scene();
+  private readonly quadCamera = new THREE.Camera();
+  private readonly ink = outlineMaterial();
+
+  constructor() {
+    this.quadScene.add(this.quad);
+    this.quad.material = this.ink;
+  }
+
+  render(renderer: THREE.WebGLRenderer, renderTrains: () => void): void {
+    const { outline } = NETWORK_STYLE.train;
+    if (!outline.enabled || outline.widthPx <= 0) return;
+
+    renderer.getDrawingBufferSize(this.size);
+    const w = Math.max(1, this.size.x);
+    const h = Math.max(1, this.size.y);
+    if (!this.rtMask || this.rtMask.width !== w || this.rtMask.height !== h) {
+      this.rtMask?.dispose();
+      this.rtMask = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false });
+    }
+
+    const prevClear = renderer.getClearColor(new THREE.Color());
+    const prevAlpha = renderer.getClearAlpha();
+    renderer.setRenderTarget(this.rtMask);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, false, false);
+    renderTrains();
+    renderer.setClearColor(prevClear, prevAlpha);
+
+    const u = this.ink.uniforms;
+    u.tMask.value = this.rtMask.texture;
+    u.texel.value.set(outline.widthPx / w, outline.widthPx / h);
+    u.color.value.set(outline.color);
+    renderer.setRenderTarget(null);
+    renderer.render(this.quadScene, this.quadCamera);
+  }
+
+  dispose(): void {
+    this.rtMask?.dispose();
+    this.quad.geometry.dispose();
+    this.ink.dispose();
+  }
+}
+
+// Ink where a ring of taps at the outline width (plus a half-width ring, so the
+// band fills in solid) finds train coverage the center pixel lacks. `texel` is
+// already scaled by widthPx, so a tap direction of length 1 lands at the rim.
+function outlineMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+    uniforms: {
+      tMask: { value: null },
+      texel: { value: new THREE.Vector2() },
+      color: { value: new THREE.Color(0x000000) },
+    },
+    vertexShader: FULLSCREEN_VERT,
+    fragmentShader: /* glsl */ `
+      uniform sampler2D tMask;
+      uniform vec2 texel;
+      uniform vec3 color;
+      varying vec2 vUv;
+      float tap(vec2 dir, float scale) {
+        return texture2D(tMask, vUv + dir * texel * scale).a;
+      }
+      void main() {
+        float center = texture2D(tMask, vUv).a;
+        float m = 0.0;
+        m = max(m, tap(vec2( 1.0,  0.0), 1.0));
+        m = max(m, tap(vec2(-1.0,  0.0), 1.0));
+        m = max(m, tap(vec2( 0.0,  1.0), 1.0));
+        m = max(m, tap(vec2( 0.0, -1.0), 1.0));
+        m = max(m, tap(vec2( 0.7071,  0.7071), 1.0));
+        m = max(m, tap(vec2(-0.7071,  0.7071), 1.0));
+        m = max(m, tap(vec2( 0.7071, -0.7071), 1.0));
+        m = max(m, tap(vec2(-0.7071, -0.7071), 1.0));
+        m = max(m, tap(vec2( 1.0,  0.0), 0.5));
+        m = max(m, tap(vec2(-1.0,  0.0), 0.5));
+        m = max(m, tap(vec2( 0.0,  1.0), 0.5));
+        m = max(m, tap(vec2( 0.0, -1.0), 0.5));
+        gl_FragColor = vec4(color, m * (1.0 - center));
+      }
+    `,
+  });
 }
 
 // A fullscreen quad passes clip-space positions straight through; PlaneGeometry(2,2)

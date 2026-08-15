@@ -12,7 +12,12 @@ import {
   type TrackSegment,
   trackTopY,
 } from "./track-render";
-import { type GlowEffect, cameraDirLocal, createGlow } from "./train-glow";
+import {
+  type GlowEffect,
+  TrainOutlinePass,
+  cameraDirLocal,
+  createGlow,
+} from "./train-glow";
 import type { TrainPose } from "./trains";
 
 // three.js render layer the train boxes also live on, so the bloom effect can
@@ -73,6 +78,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private waterTexture?: THREE.Texture;
   private trains?: THREE.InstancedMesh;
   private readonly glow: GlowEffect = createGlow();
+  private readonly outline = new TrainOutlinePass();
   private readonly lighting = new LightingSystem();
   private trainCapacity = 0;
   // Packed per-frame train draw data handed to the glow effect (train-glow.ts),
@@ -164,6 +170,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   onRemove() {
     this.map.off("zoom", this.syncZoom);
     this.glow.dispose();
+    this.outline.dispose();
     this.waterTexture?.dispose();
     this.renderer.dispose();
   }
@@ -236,6 +243,13 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
         }
       },
     );
+    // Cel outline last, over whatever the glow composited. Its mask render is
+    // always trains-only (unlike the bloom source, which may be the whole scene).
+    this.outline.render(this.renderer, () => {
+      this.camera.layers.set(TRAIN_LAYER);
+      this.renderer.render(this.scene, this.camera);
+      this.camera.layers.set(0);
+    });
     // No unconditional triggerRepaint here — that would repaint the full scene +
     // bloom at max FPS forever, even on a static view. The animation loop is driven
     // by setTrains (called every rAF frame from main.ts), which re-arms a repaint
