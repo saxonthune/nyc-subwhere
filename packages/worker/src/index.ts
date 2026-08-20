@@ -17,7 +17,7 @@ const POLLER_NAME = "singleton";
 const BIKE_SNAPSHOT_KEY = "bikes:snapshot";
 const BIKE_STATIONS_KEY = "bikes:stations";
 // Station identity (doc02.09) changes seasonally, unlike the 30s live counts.
-const STATIONS_REFRESH_MS = 3_600_000;
+const STATIONS_REFRESH_MS = 300_000;
 
 export interface Env {
   ASSETS: Fetcher;
@@ -99,7 +99,7 @@ export default {
       return new Response(cached, {
         headers: {
           "content-type": "application/json",
-          "cache-control": "max-age=3600",
+          "cache-control": "max-age=300",
         },
       });
     }

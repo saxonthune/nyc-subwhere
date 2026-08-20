@@ -25,6 +25,19 @@ interface RawStationInformation {
   lat?: number;
   lon?: number;
   capacity?: number;
+  region_id?: string;
+}
+
+// The bkn feed covers New Jersey too; this app is NYC-only, so those docks are
+// stripped at poll time. GBFS regions 70 (JC District) and 311 (Hoboken
+// District) are New Jersey — but some Hoboken docks carry no region_id at all,
+// so a geographic clause backs the region test: west of the Hudson means
+// lon < -74.02 once north of Governors Island (lat > 40.695; the island's
+// west shore pokes past that longitude, and Bay Ridge further south does too).
+const NJ_REGIONS = new Set(["70", "311"]);
+function isNewJersey(s: RawStationInformation): boolean {
+  if (s.region_id != null && NJ_REGIONS.has(s.region_id)) return true;
+  return (s.lon ?? 0) < -74.02 && (s.lat ?? 0) > 40.695;
 }
 
 // null on any failure — the caller keeps the last good KV frame rather than
@@ -70,7 +83,7 @@ export async function pollBikeStations(): Promise<BikeStationsIndex | null> {
 
     const stations: BikeStationInfo[] = [];
     for (const s of raw) {
-      if (!s.station_id) continue;
+      if (!s.station_id || isNewJersey(s)) continue;
       stations.push({
         stationId: s.station_id,
         name: s.name ?? "",

@@ -55,6 +55,15 @@ why, not sizes or radii.
 Bike View exists to clear the stage for cycling-oriented information; what that
 information is belongs to its own doc, not this one.
 
+## Interaction nudge (NG)
+
+- **NG-1.** At load, the system shall show a banner above the row with UI/menu
+  items, styled to read as an informational nudge, with content inviting the
+  user to interact with the map.
+- **NG-2.** The system shall dismiss the nudge banner when the user taps a Trip,
+  taps a Station, taps any UI element (including the banner itself), or when 10
+  seconds have elapsed since it appeared — whichever happens first.
+
 ## Input-command bindings
 
 An **input** is an ordered pair — a target and an interaction method. Each row
@@ -63,5 +72,6 @@ binds one input to the command it performs and the requirement it serves.
 | Target | Interaction | Action | Req |
 |---|---|---|---|
 | View toggle | tap | Switch to the other view; close any open inspector | TG-2, BV-3 |
-| Station or Trip (Subway View) | tap | Open the inspector on it | SV-2 |
+| Station or Trip (Subway View) | tap | Open the inspector on it; dismiss the nudge banner | SV-2, NG-2 |
+| Any UI element, including the nudge banner | tap | Dismiss the nudge banner | NG-2 |
 | Station, Trip, or line (Bike View) | tap | Nothing | BV-2 |

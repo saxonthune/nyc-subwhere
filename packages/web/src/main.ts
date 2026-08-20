@@ -48,9 +48,10 @@ if (!container) {
 // The street-map toggle (doc02.03) later layers a dark vector basemap beneath this.
 const map = new maplibregl.Map({
   container,
-  center: [-73.98, 40.75], // Manhattan
-  zoom: 15,
+  center: [-73.9902, 40.72655],
+  zoom: 12.29,
   pitch: 55,
+  bearing: 22,
   // MSAA lives on the GL context, which MapLibre owns — the Three custom layer
   // shares this context, so setting antialias on THREE.WebGLRenderer is a no-op.
   // On mobile tile-based GPUs this resolves on-tile, so it's nearly free.
@@ -176,6 +177,28 @@ map.on("load", async () => {
     menu.options = [...menu.options, debugOption];
   }
   document.body.append(statsPanel, menu);
+
+  // Interaction nudge (doc01.04 NG-1/NG-2): shown once at load, above the bar;
+  // dismissed by a Trip/Station tap (map.on("click") below), any UI tap (the
+  // capture listener below fires for anything outside the map canvas, which
+  // covers the banner itself), or a 10s timeout — whichever comes first.
+  menu.nudgeVisible = true;
+  const nudgeTimer = setTimeout(dismissNudge, 10_000);
+  function dismissNudge() {
+    if (!menu.nudgeVisible) return;
+    menu.nudgeVisible = false;
+    clearTimeout(nudgeTimer);
+  }
+  menu.onNudgeDismiss = dismissNudge;
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (menu.nudgeVisible && !container.contains(e.target as Node)) {
+        dismissNudge();
+      }
+    },
+    true,
+  );
 
   // Inspector (doc01.03): station and segment metadata parallel the arrays handed
   // to the layer, so a PickResult's index reads straight back to props here; a
@@ -443,6 +466,7 @@ map.on("load", async () => {
 
   map.on("click", (e) => {
     const r = networkLayer.pick(e.point);
+    if (r?.kind === "train" || r?.kind === "station") dismissNudge();
     if (r?.kind === "bikeStation") {
       void openBikeStation(r.bikeStationIndex);
       return;
