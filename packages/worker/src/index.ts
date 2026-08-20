@@ -1,36 +1,22 @@
-import type { TripState } from "@nyc-subwhere/contract";
-import { transit_realtime } from "./gtfs-proto.js";
-import { type TripMemory, buildSnapshot, pruneMemory } from "./reshape.js";
+import type { RenderSnapshot } from "@nyc-subwhere/contract";
+import { pollSnapshot } from "./poll.js";
+import type { TripMem, TripMemory } from "./reshape.js";
 
-// Cross-poll memory (doc02.04): recovers each trip's departed stop and detects
-// stalls by diffing consecutive snapshots. Module-scoped, so it survives within
-// a warm isolate — adequate for local dev and a single edge instance. Production
-// durability (a shared trip a rider on isolate B sees the same as isolate A)
-// wants this in a Durable Object / KV; the shape here ports directly.
-const tripMemory: TripMemory = new Map();
-
-// The eight NYCT realtime feeds (no API key required since 2023). Each covers a
-// group of Routes; we fan in across all of them and merge into one snapshot.
-// Read-through caching (doc02.04) lands here later.
-const FEED_BASE =
-  "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2F";
-const FEEDS = [
-  "gtfs", // 1 2 3 4 5 6 7 + 42 St shuttle
-  "gtfs-ace", // A C E + Rockaway Park shuttle (H)
-  "gtfs-bdfm", // B D F M + Franklin Av shuttle (FS)
-  "gtfs-g", // G
-  "gtfs-jz", // J Z
-  "gtfs-nqrw", // N Q R W
-  "gtfs-l", // L
-  "gtfs-si", // Staten Island Railway
-].map((f) => `${FEED_BASE}${f}`);
+// The MTA publishes each feed on a ~30s cadence, so we refresh on the same beat.
+const POLL_INTERVAL_MS = 30_000;
+const SNAPSHOT_KEY = "trips:snapshot";
+// One poller owns the loop; a fixed name keeps every request routed to the same
+// Durable Object instance.
+const POLLER_NAME = "singleton";
 
 export interface Env {
   ASSETS: Fetcher;
+  SNAPSHOT: KVNamespace;
+  FEED_POLLER: DurableObjectNamespace;
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/health") {
@@ -38,33 +24,77 @@ export default {
     }
 
     if (url.pathname === "/api/trips") {
-      const asOf = Date.now();
-      const responses = await Promise.allSettled(FEEDS.map((u) => fetch(u)));
+      // The read path never decodes feeds — that work lives in the poller, which
+      // writes the finished frame to KV every 30s. A hit here wakes the poller if
+      // it has gone idle; fire-and-forget so the response never waits on it.
+      const poller = env.FEED_POLLER.get(env.FEED_POLLER.idFromName(POLLER_NAME));
+      ctx.waitUntil(poller.fetch("https://poller/kick"));
 
-      const trips: TripState[] = [];
-      const seen = new Set<string>();
-      let ok = 0;
-      for (const r of responses) {
-        if (r.status !== "fulfilled" || !r.value.ok) continue;
-        const buf = new Uint8Array(await r.value.arrayBuffer());
-        const msg = transit_realtime.FeedMessage.decode(buf);
-        trips.push(...buildSnapshot(msg, asOf, tripMemory, seen).trips);
-        ok++;
+      const cached = await env.SNAPSHOT.get(SNAPSHOT_KEY);
+      if (cached == null) {
+        // The loop just started and has not published yet: an empty frame the
+        // client renders as "no trains" and clears on its next 30s poll.
+        const warming: RenderSnapshot = { asOf: Date.now(), trips: [] };
+        return Response.json(warming, {
+          headers: { "cache-control": "no-store" },
+        });
       }
-      // A trip's Vehicle Position and Trip Update always share a feed, so merging
-      // per-feed snapshots is safe. Only 502 if every feed failed. Prune memory
-      // once, after every feed, so a trip is only forgotten when no feed carries
-      // it — but not on a total outage, which would wrongly forget everything.
-      if (ok === 0) {
-        return new Response("all upstream feeds failed", { status: 502 });
-      }
-      pruneMemory(tripMemory, seen);
-      return Response.json(
-        { asOf, trips },
-        { headers: { "cache-control": "no-store" } },
-      );
+      return new Response(cached, {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        },
+      });
     }
 
     return env.ASSETS.fetch(request);
   },
 } satisfies ExportedHandler<Env>;
+
+// The single producer (doc02.04): a self-rescheduling 30s alarm loop that fetches
+// the feeds, reshapes against a cross-poll memory, and publishes the frame to KV.
+// Being one instance makes that memory a single coherent history — earlier
+// per-request decoding gave each edge isolate its own, so cross-poll diffs
+// disagreed. The memory is persisted to DO storage so it survives eviction
+// between alarms.
+export class FeedPoller implements DurableObject {
+  private memory: TripMemory | null = null;
+
+  constructor(
+    private state: DurableObjectState,
+    private env: Env,
+  ) {}
+
+  // The kick: ensure the alarm loop is running. Idempotent — if an alarm is
+  // already pending we leave it, so concurrent kicks cost nothing.
+  async fetch(_request: Request): Promise<Response> {
+    if ((await this.state.storage.getAlarm()) == null) {
+      await this.state.storage.setAlarm(Date.now());
+    }
+    return new Response(null, { status: 204 });
+  }
+
+  async alarm(): Promise<void> {
+    const memory = await this.loadMemory();
+    try {
+      const snap = await pollSnapshot(memory);
+      // null = every feed failed this cycle; keep the last good frame in KV.
+      if (snap != null) {
+        await this.env.SNAPSHOT.put(SNAPSHOT_KEY, JSON.stringify(snap));
+      }
+      await this.state.storage.put("memory", [...memory]);
+    } finally {
+      // Reschedule unconditionally so a thrown poll cannot kill the loop.
+      await this.state.storage.setAlarm(Date.now() + POLL_INTERVAL_MS);
+    }
+  }
+
+  private async loadMemory(): Promise<TripMemory> {
+    if (this.memory == null) {
+      const stored =
+        await this.state.storage.get<[string, TripMem][]>("memory");
+      this.memory = new Map(stored ?? []);
+    }
+    return this.memory;
+  }
+}

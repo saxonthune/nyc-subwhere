@@ -10,3 +10,19 @@ port = 8788
 [assets]
 directory = "../web/dist"
 binding = "ASSETS"
+
+# The finished render frame, republished every 30s by the FeedPoller (doc02.04)
+# and read straight back on /api/trips — the read path never decodes feeds.
+[[kv_namespaces]]
+binding = "SNAPSHOT"
+id = "a7b48a68d6df47ddb240285392b174a8"
+
+# The single feed-poller instance: owns the 30s alarm loop and the cross-poll
+# memory. Durable Objects require the Workers Paid plan.
+[[durable_objects.bindings]]
+name = "FEED_POLLER"
+class_name = "FeedPoller"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["FeedPoller"]
