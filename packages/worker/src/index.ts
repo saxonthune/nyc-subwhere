@@ -27,7 +27,9 @@ export default {
       // The read path never decodes feeds — that work lives in the poller, which
       // writes the finished frame to KV every 30s. A hit here wakes the poller if
       // it has gone idle; fire-and-forget so the response never waits on it.
-      const poller = env.FEED_POLLER.get(env.FEED_POLLER.idFromName(POLLER_NAME));
+      const poller = env.FEED_POLLER.get(
+        env.FEED_POLLER.idFromName(POLLER_NAME),
+      );
       ctx.waitUntil(poller.fetch("https://poller/kick"));
 
       const cached = await env.SNAPSHOT.get(SNAPSHOT_KEY);
