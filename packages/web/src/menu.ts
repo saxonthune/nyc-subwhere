@@ -14,11 +14,15 @@ export class Menu extends LitElement {
     options: { attribute: false },
     open: { attribute: false, type: Boolean },
     nextUpdateAt: { attribute: false, type: Number },
+    viewMode: { attribute: false },
+    onViewToggle: { attribute: false },
   };
   declare options: MenuOption[];
   declare open: boolean;
   /** Epoch ms of the next data poll; 0 until the first poll is scheduled. */
   declare nextUpdateAt: number;
+  declare viewMode: "subway" | "bike";
+  declare onViewToggle?: () => void;
 
   private tick?: ReturnType<typeof setInterval>;
 
@@ -27,6 +31,7 @@ export class Menu extends LitElement {
     this.options = [];
     this.open = false;
     this.nextUpdateAt = 0;
+    this.viewMode = "subway";
   }
 
   // The countdown is derived from wall-clock, so re-render once a second rather
@@ -148,6 +153,13 @@ export class Menu extends LitElement {
       <div class="bar">
         <button class="toggle" @click=${this.toggle}>
           <span class="full">Menu</span><span class="short">☰</span>
+        </button>
+        <button class="toggle" @click=${() => this.onViewToggle?.()}>
+          <span class="full">${
+            // The label names the view a press switches TO (doc01.04 TG-3).
+            this.viewMode === "subway" ? "Bike view" : "Subway view"
+          }</span
+          ><span class="short">${this.viewMode === "subway" ? "🚲" : "🚇"}</span>
         </button>
         <span class="countdown">
           <span class="full">${cd.full}</span><span class="short">${cd.short}</span>

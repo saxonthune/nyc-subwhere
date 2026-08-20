@@ -367,6 +367,19 @@ map.on("load", async () => {
     openPick = null;
   });
 
+  // View toggle (doc01.04): flip the layer's representation, and honor BV-3 — an
+  // inspector opened in Subway View must not linger over an inert Bike View.
+  let viewMode: "subway" | "bike" = "subway";
+  menu.onViewToggle = () => {
+    viewMode = viewMode === "subway" ? "bike" : "subway";
+    menu.viewMode = viewMode;
+    networkLayer.setViewMode(viewMode);
+    if (viewMode === "bike") {
+      openPick = null;
+      syncInspector();
+    }
+  };
+
   // Ease the camera to a point placed 33% down the screen, not dead center — the
   // panel covers the lower screen. `offset` is the target's pixel gap from the
   // container center (negative = up).

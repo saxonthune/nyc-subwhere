@@ -1,4 +1,4 @@
-import type { DebugGraph } from "@nyc-subwhere/contract";
+import type { DebugGraph, DebugPolyline } from "@nyc-subwhere/contract";
 import maplibregl from "maplibre-gl";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -106,6 +106,13 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   // One merged pipe mesh per debug layer, hidden until selected; -1 = none active (tracks shown).
   private readonly debugMeshes: { label: string; mesh: THREE.Mesh }[] = [];
   private activeDebug = -1;
+  // View mode (doc01.04): Bike View's thin network and small pucks are built
+  // lazily on first entry and visibility-flipped against the subway build.
+  private viewMode: "subway" | "bike" = "subway";
+  private thinNetwork?: THREE.Mesh;
+  private smallPucks?: THREE.InstancedMesh;
+  // The current train core's height — discs and boxes differ, and seating needs it.
+  private trainHeight = NETWORK_STYLE.train.height;
 
   constructor(
     stations: LngLat[],
@@ -148,7 +155,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       toLocal: (p) => this.toLocal(p),
     });
     for (const obj of this.trackBuild.objects) this.scene.add(obj);
-    this.pucks = this.buildPucks();
+    this.pucks = this.buildPucks(NETWORK_STYLE.puck);
     this.pucks.userData.kind = "station";
     this.scene.add(this.pucks);
     this.buildDebugLayers();
@@ -181,6 +188,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   // frame — no view matrix to undo. Nearest hit wins; invisible meshes (e.g. the
   // trains when toggled off) are skipped by three.
   pick(point: { x: number; y: number }): PickResult | null {
+    // Bike View is inert (doc01.04 BV-2): nothing on the network is pickable.
+    if (this.viewMode === "bike") return null;
     const canvas = this.map.getCanvas();
     const ndcX = (point.x / canvas.clientWidth) * 2 - 1;
     const ndcY = -(point.y / canvas.clientHeight) * 2 + 1;
@@ -321,12 +330,14 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     return mesh;
   }
 
-  private buildPucks(): THREE.InstancedMesh {
-    const { puck } = NETWORK_STYLE;
+  private buildPucks(size: {
+    radius: number;
+    height: number;
+  }): THREE.InstancedMesh {
     const geo = new THREE.CylinderGeometry(
-      puck.radius,
-      puck.radius,
-      puck.height,
+      size.radius,
+      size.radius,
+      size.height,
       24,
     );
     const mat = this.lighting.stationMaterial();
@@ -334,7 +345,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     [mat.polygonOffsetFactor, mat.polygonOffsetUnits] = PUCK_DEPTH_OFFSET;
     const mesh = new THREE.InstancedMesh(geo, mat, this.placements.length);
     // Seat the puck so its top clears the top of the track (its wall tops).
-    const centerY = trackTopY() + puck.clearanceOverTube - puck.height / 2;
+    const centerY =
+      trackTopY() + NETWORK_STYLE.puck.clearanceOverTube - size.height / 2;
     const m = new THREE.Matrix4();
     this.placements.forEach((p, i) => {
       m.makeTranslation(p.x, centerY, p.z);
@@ -357,8 +369,10 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     const core = this.trains;
     if (!core) return;
 
-    const centerY = trainCenterY();
-    const off = NETWORK_STYLE.track.trainOffsetM;
+    const centerY = trainCenterY(this.trainHeight);
+    // Discs ride the centerline: the parallel-track visual collapses at Bike
+    // View's thin width, so the left-of-travel offset would read as error.
+    const off = this.viewMode === "bike" ? 0 : NETWORK_STYLE.track.trainOffsetM;
     const rot = new THREE.Matrix4();
     const pos = new THREE.Matrix4();
     const m = new THREE.Matrix4();
@@ -429,6 +443,100 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.map.triggerRepaint();
   }
 
+  // Swap the Board between Subway View and Bike View (doc01.04): one scene, two
+  // representation sets flipped by visibility, so switching re-fetches nothing
+  // (VW-2). Trains rebuild so their geometry matches the view. Not persisted: a
+  // reload starts in Subway View (VW-1).
+  setViewMode(mode: "subway" | "bike"): void {
+    if (mode === this.viewMode) return;
+    this.viewMode = mode;
+    const bike = mode === "bike";
+    if (bike && !this.thinNetwork) {
+      const mesh = this.buildThinNetwork();
+      if (mesh) {
+        this.thinNetwork = mesh;
+        this.scene.add(mesh);
+      }
+    }
+    if (bike && !this.smallPucks) {
+      // No userData.kind: small pucks are never pick targets (BV-2).
+      this.smallPucks = this.buildPucks(NETWORK_STYLE.bikeView.station);
+      this.scene.add(this.smallPucks);
+    }
+    for (const obj of this.trackBuild?.objects ?? []) obj.visible = !bike;
+    if (this.thinNetwork) this.thinNetwork.visible = bike;
+    if (this.pucks) this.pucks.visible = !bike;
+    if (this.smallPucks) this.smallPucks.visible = bike;
+    if (this.trains) {
+      this.rebuildTrains(this.trainCapacity);
+      this.setTrains(this.currentPoses);
+    }
+    this.map.triggerRepaint();
+  }
+
+  // Bike View's network (doc01.04 VW-3): the junction-synthesized corridor
+  // centerlines the bake already publishes ("Centerlines (junctioned)",
+  // build-geometry.ts) — one line per corridor, with the authored merge/split
+  // geometry connecting lines at junctions. Falls back to the raw per-direction
+  // segments if the bake published no debug layers.
+  private buildThinNetwork(): THREE.Mesh | null {
+    const junctioned = this.debug.layers.find(
+      (l) => l.id === "centerlines-junctioned",
+    );
+    const lines: DebugPolyline[] =
+      junctioned?.lines ??
+      this.segments.map((s) => ({
+        coordinates: s.points,
+        color: s.colors[0] ?? "#888888",
+      }));
+    return this.buildPipes(lines, NETWORK_STYLE.bikeView.lineRadius);
+  }
+
+  // Merge colored polylines into one self-lit skinny-tube mesh, seated at the
+  // track top so it reads at the same height as the platforms it replaces.
+  // Shared by the debug pipe layers and Bike View's thin network. Degenerate
+  // points are dropped so the tube stays finite; null when nothing survives.
+  private buildPipes(
+    lines: DebugPolyline[],
+    radius: number,
+  ): THREE.Mesh | null {
+    const y = trackTopY();
+    const geos: THREE.BufferGeometry[] = [];
+    for (const line of lines) {
+      const pts: THREE.Vector3[] = [];
+      for (const ll of line.coordinates) {
+        const { x, z } = this.toLocal(ll);
+        const prev = pts[pts.length - 1];
+        if (prev && prev.x === x && prev.z === z) continue;
+        pts.push(new THREE.Vector3(x, y, z));
+      }
+      if (pts.length < 2) continue;
+      const curve = new THREE.CatmullRomCurve3(pts);
+      const tube = new THREE.TubeGeometry(
+        curve,
+        Math.max(2, (pts.length - 1) * 3),
+        radius,
+        6,
+        false,
+      );
+      const c = new THREE.Color(line.color);
+      const n = tube.getAttribute("position").count;
+      const colors = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) colors.set([c.r, c.g, c.b], i * 3);
+      tube.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      geos.push(tube);
+    }
+    if (geos.length === 0) return null;
+    const merged = mergeGeometries(geos, false);
+    for (const g of geos) g.dispose();
+    const mesh = new THREE.Mesh(
+      merged,
+      new THREE.MeshBasicMaterial({ vertexColors: true }),
+    );
+    mesh.frustumCulled = false;
+    return mesh;
+  }
+
   // Enable/disable the scene bloom — the glow that lights the whole network. Off
   // leaves the flat base render (land, track, stations, trains) with no bloom.
   // Not persisted: a reload starts with lighting on.
@@ -438,45 +546,12 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.map.triggerRepaint();
   }
 
-  // Build one merged skinny-pipe mesh per debug layer (doc02.07), self-lit and colored per line,
-  // hidden until cycleDebug selects it. Seated at the track top so a centerline reads at the same
-  // height as the platform it replaces. Degenerate points are dropped so the tube stays finite.
+  // Build one merged skinny-pipe mesh per debug layer (doc02.07), hidden until
+  // cycleDebug selects it.
   private buildDebugLayers(): void {
-    const y = trackTopY();
     for (const layer of this.debug.layers) {
-      const geos: THREE.BufferGeometry[] = [];
-      for (const line of layer.lines) {
-        const pts: THREE.Vector3[] = [];
-        for (const ll of line.coordinates) {
-          const { x, z } = this.toLocal(ll);
-          const prev = pts[pts.length - 1];
-          if (prev && prev.x === x && prev.z === z) continue;
-          pts.push(new THREE.Vector3(x, y, z));
-        }
-        if (pts.length < 2) continue;
-        const curve = new THREE.CatmullRomCurve3(pts);
-        const tube = new THREE.TubeGeometry(
-          curve,
-          Math.max(2, (pts.length - 1) * 3),
-          DEBUG_PIPE_RADIUS,
-          6,
-          false,
-        );
-        const c = new THREE.Color(line.color);
-        const n = tube.getAttribute("position").count;
-        const colors = new Float32Array(n * 3);
-        for (let i = 0; i < n; i++) colors.set([c.r, c.g, c.b], i * 3);
-        tube.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-        geos.push(tube);
-      }
-      if (geos.length === 0) continue;
-      const merged = mergeGeometries(geos, false);
-      for (const g of geos) g.dispose();
-      const mesh = new THREE.Mesh(
-        merged,
-        new THREE.MeshBasicMaterial({ vertexColors: true }),
-      );
-      mesh.frustumCulled = false;
+      const mesh = this.buildPipes(layer.lines, DEBUG_PIPE_RADIUS);
+      if (!mesh) continue;
       mesh.visible = false;
       this.scene.add(mesh);
       this.debugMeshes.push({ label: layer.label, mesh });
@@ -495,7 +570,12 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.debugMeshes.forEach((d, i) => {
       d.mesh.visible = i === this.activeDebug;
     });
-    for (const obj of this.trackBuild?.objects ?? []) obj.visible = !active;
+    // Leaving the debug cycle restores whichever view is current, not always the
+    // subway ribbons.
+    const subway = this.viewMode === "subway";
+    for (const obj of this.trackBuild?.objects ?? [])
+      obj.visible = !active && subway;
+    if (this.thinNetwork) this.thinNetwork.visible = !active && !subway;
     if (this.trains) this.trains.visible = active ? false : this.trainsVisible;
     this.map.triggerRepaint();
     return active ? this.debugMeshes[this.activeDebug].label : "off";
@@ -506,17 +586,24 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       this.scene.remove(this.trains);
       this.trains.geometry.dispose();
     }
-    const { train } = NETWORK_STYLE;
+    const { train, bikeView } = NETWORK_STYLE;
 
-    // Core: a solid, fully self-lit box (unlit MeshBasic) so the train reads at
-    // full Route color against the dimmer, shaded tubes below it. Local +X =
-    // length (along travel), Y = height, Z = width (across). setColorAt tints
-    // each instance, so one material carries every Route color.
-    const coreGeo = new THREE.BoxGeometry(
-      train.length,
-      train.height,
-      train.width,
-    );
+    // Core: a solid, fully self-lit shape (unlit MeshBasic) so the train reads at
+    // full Route color against the dimmer, shaded tubes below it. Subway View is
+    // an elongated box — local +X = length (along travel), Y = height, Z = width
+    // (across); Bike View is a small disc (doc01.04 BV-1), radially symmetric so
+    // the pose loop's bearing rotation is harmless. setColorAt tints each
+    // instance, so one material carries every Route color.
+    const bike = this.viewMode === "bike";
+    const coreGeo = bike
+      ? new THREE.CylinderGeometry(
+          bikeView.train.radius,
+          bikeView.train.radius,
+          bikeView.train.height,
+          20,
+        )
+      : new THREE.BoxGeometry(train.length, train.height, train.width);
+    this.trainHeight = bike ? bikeView.train.height : train.height;
     const trainMat = new THREE.MeshBasicMaterial();
     trainMat.polygonOffset = true;
     [trainMat.polygonOffsetFactor, trainMat.polygonOffsetUnits] =
@@ -553,8 +640,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
 // Train underside rests `train.clearance` above the puck top, which itself sits
 // `puck.clearanceOverTube` above the top of the track — so trains read as sitting
 // on top of both the track and the pucks.
-function trainCenterY(): number {
+function trainCenterY(coreHeight: number): number {
   const { puck, train } = NETWORK_STYLE;
   const puckTop = trackTopY() + puck.clearanceOverTube;
-  return puckTop + train.clearance + train.height / 2;
+  return puckTop + train.clearance + coreHeight / 2;
 }

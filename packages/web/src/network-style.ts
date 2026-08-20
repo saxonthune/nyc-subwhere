@@ -104,6 +104,16 @@ export const NETWORK_STYLE = {
     strokeColor: "#000000",
   },
 
+  // Bike View (doc01.04): the subway receded to context — centerlines as skinny
+  // tubes, small pucks, trains as small discs. Meters. The ribbon width itself is
+  // baked (build-ribbons.ts HALF_WIDTH_M), so Bike View swaps representation
+  // rather than narrowing it.
+  bikeView: {
+    lineRadius: 3,
+    station: { radius: 12, height: 8 },
+    train: { radius: 9, height: 4 },
+  },
+
   // 3D station geometry (doc02.03), rendered in a Three.js custom layer. Sizes are
   // in meters (the layer builds meshes in a meter-scaled local frame). The puck is
   // a flat disc sitting at ground level, shown at every zoom.

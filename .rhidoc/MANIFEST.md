@@ -32,9 +32,10 @@ Orphaned attachments (non-md files with no corresponding root .md) are reported 
 |-----|------|---------|------|------|------|-------------|
 
 | doc01.00 | `00-index.md` |  |  | — | — | — |
-| doc01.01 | `01-glossary.md` | Load-bearing domain vocabulary — GTFS-anchored terms, the project's own coined terms, and the ambiguities to watch | product, glossary, vocabulary, gtfs | doc01.02 | doc01.02, doc01.03, doc02.01, doc02.02, doc02.03, doc02.05 | — |
+| doc01.01 | `01-glossary.md` | Load-bearing domain vocabulary — GTFS-anchored terms, the project's own coined terms, and the ambiguities to watch | product, glossary, vocabulary, gtfs | doc01.02 | doc01.02, doc01.03, doc01.04, doc02.01, doc02.02, doc02.03, doc02.05 | — |
 | doc01.02 | `02-development-ethos.md` | How this project is built with an agent — lessons carried from the FIFA-bracketing DA-RESULTS retrospective | product, process, ethos, naming, human-agent | doc01.01 | doc01.01 | — |
-| doc01.03 | `03-behaviors.md` | EARS behavioral intent for the Board — render live trips, glide between polls, never render a train at or past a Station it has not been observed to reach (segment-ahead error is fine, station-crossing is not), ride track by stops (off-route reroutes), blink when position is uncertain, reveal directional tracks on zoom, give every route on shared track representation, render the network with depth (raised track, pucks, platform boxes), seat it on grey extruded borough land over a dark-navy water disc that fades into the backdrop, tap to inspect | product, behaviors, ears, rendering, interaction | doc01.01, doc02.01, doc02.03, doc02.05 | doc02.07 | — |
+| doc01.03 | `03-behaviors.md` | EARS behavioral intent for the Board — render live trips, glide between polls, never render a train at or past a Station it has not been observed to reach (segment-ahead error is fine, station-crossing is not), ride track by stops (off-route reroutes), blink when position is uncertain, reveal directional tracks on zoom, give every route on shared track representation, render the network with depth (raised track, pucks, platform boxes), seat it on grey extruded borough land over a dark-navy water disc that fades into the backdrop, tap to inspect | product, behaviors, ears, rendering, interaction | doc01.01, doc02.01, doc02.03, doc02.05 | doc01.04, doc02.07 | — |
+| doc01.04 | `04-ui-requirements.md` | The Board's view-mode UI as a controlled, EARS-like list of shall-statements — Subway View, Bike View, and the toggle — plus the input-command bindings table | product, requirements, ears, ui, views, bike-view, interaction | doc01.01, doc01.03 | — | — |
 
 ## 02-architecture — Architecture
 
@@ -61,6 +62,7 @@ Quick lookup for file-path→doc mapping:
 | `architecture` | doc02.01, doc02.02, doc02.03, doc02.04, doc02.05, doc02.06, doc02.07, doc02.09 |
 | `backend` | doc02.04, doc02.09 |
 | `behaviors` | doc01.03 |
+| `bike-view` | doc01.04 |
 | `build-time` | doc02.05 |
 | `cartography` | doc02.07 |
 | `citibike` | doc02.09 |
@@ -73,7 +75,7 @@ Quick lookup for file-path→doc mapping:
 | `dev-tooling` | doc02.05 |
 | `docs` | doc00.01, doc00.02, doc00.03 |
 | `durable-object` | doc02.04, doc02.09 |
-| `ears` | doc01.03 |
+| `ears` | doc01.03, doc01.04 |
 | `ethos` | doc01.02 |
 | `fetch-loop` | doc02.01 |
 | `frontend` | doc02.03 |
@@ -83,7 +85,7 @@ Quick lookup for file-path→doc mapping:
 | `graphics` | doc02.08 |
 | `gtfs` | doc01.01, doc02.02, doc02.05 |
 | `human-agent` | doc01.02 |
-| `interaction` | doc01.03 |
+| `interaction` | doc01.03, doc01.04 |
 | `interpolation` | doc02.01, doc02.06 |
 | `junctions` | doc02.07 |
 | `kv` | doc02.04, doc02.09 |
@@ -99,10 +101,11 @@ Quick lookup for file-path→doc mapping:
 | `position` | doc02.06 |
 | `prediction` | doc02.06 |
 | `process` | doc01.02 |
-| `product` | doc01.01, doc01.02, doc01.03 |
+| `product` | doc01.01, doc01.02, doc01.03, doc01.04 |
 | `realtime` | doc02.01, doc02.06 |
 | `relational-facts` | doc00.02 |
 | `rendering` | doc01.03, doc02.03, doc02.07, doc02.08 |
+| `requirements` | doc01.04 |
 | `research` | doc02.06, doc02.07 |
 | `script` | doc02.05 |
 | `shader` | doc02.08 |
@@ -111,6 +114,8 @@ Quick lookup for file-path→doc mapping:
 | `theory` | doc00.01 |
 | `threejs` | doc02.03 |
 | `typescript` | doc02.03 |
+| `ui` | doc01.04 |
+| `views` | doc01.04 |
 | `vite` | doc02.03 |
 | `vocabulary` | doc01.01 |
 | `worker` | doc02.04 |
