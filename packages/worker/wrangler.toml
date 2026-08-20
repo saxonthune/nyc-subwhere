@@ -23,6 +23,17 @@ id = "a7b48a68d6df47ddb240285392b174a8"
 name = "FEED_POLLER"
 class_name = "FeedPoller"
 
+# The Citi Bike poller (doc02.09): same singleton-alarm pattern, second class
+# so its GBFS polling and cross-poll state stay independent of FeedPoller's.
+[[durable_objects.bindings]]
+name = "BIKE_POLLER"
+class_name = "BikePoller"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["FeedPoller"]
+
+# A new DO class on a deployed worker requires its own migration tag.
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["BikePoller"]
