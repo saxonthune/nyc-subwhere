@@ -13,6 +13,8 @@ interface RawStationStatus {
   num_ebikes_available?: number;
   num_bikes_available?: number;
   num_docks_available?: number;
+  num_bikes_disabled?: number;
+  num_docks_disabled?: number;
   is_renting?: number;
   is_returning?: number;
 }
@@ -45,6 +47,8 @@ export async function pollBikeSnapshot(): Promise<BikeSnapshot | null> {
         ebikes,
         classicBikes: Math.max(0, (s.num_bikes_available ?? 0) - ebikes),
         docks: s.num_docks_available ?? 0,
+        bikesDisabled: s.num_bikes_disabled ?? 0,
+        docksDisabled: s.num_docks_disabled ?? 0,
         renting: s.is_renting === 1,
         returning: s.is_returning === 1,
       });

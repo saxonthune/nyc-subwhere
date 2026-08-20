@@ -112,6 +112,9 @@ export const NETWORK_STYLE = {
     lineRadius: 3,
     station: { radius: 12, height: 8 },
     train: { radius: 9, height: 4 },
+    // Citi Bike docks: plain white discs, a step bigger than the receded subway
+    // Stations so they read as the view's subject.
+    bikeStation: { radius: 16, height: 8, color: "#ffffff" },
   },
 
   // 3D station geometry (doc02.03), rendered in a Three.js custom layer. Sizes are

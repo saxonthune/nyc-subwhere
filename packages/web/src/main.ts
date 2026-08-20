@@ -1,6 +1,10 @@
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type {
+  BikeSnapshot,
+  BikeStationInfo,
+  BikeStationStatus,
+  BikeStationsIndex,
   DebugGraph,
   Direction,
   LngLat,
@@ -16,6 +20,7 @@ import segmentsUrl from "./assets/segments.geojson?url";
 import stationsUrl from "./assets/stations.geojson?url";
 import trackGraphUrl from "./assets/track-graph.json?url";
 import trackIndexUrl from "./assets/track-index.json?url";
+import { BikePanel } from "./bike-panel";
 import { HeaderPanel } from "./header-panel";
 import {
   InspectorPanel,
@@ -320,6 +325,9 @@ map.on("load", async () => {
         },
       };
     }
+    // Bike-station picks open the bike panel in the click handler; they never
+    // resolve to an inspector target.
+    if (r.kind !== "train") return null;
     const trip = snapshot?.trips.find((t) => t.tripId === r.tripId);
     if (!trip) return null;
     const res = resolveTrip(trip, tracks, Date.now() + clockSkew);
@@ -355,11 +363,94 @@ map.on("load", async () => {
     inspector.target = openPick ? toTarget(openPick) : null;
     if (openPick && !inspector.target) openPick = null;
   };
+  // Citi Bike docks (doc02.09 data): identity fetched once, on first entry into
+  // Bike View — until then the discs simply don't exist. Live counts are fetched
+  // on tap, cached at the snapshot's own 30s cadence so repeated taps within one
+  // frame reuse the response.
+  const bikePanel = new BikePanel();
+  document.body.appendChild(bikePanel);
+  let bikeInfos: BikeStationInfo[] = [];
+  const loadBikeStations = async () => {
+    if (bikeInfos.length > 0) return;
+    try {
+      const res = await fetch("/api/bike-stations");
+      if (!res.ok) return;
+      const idx = (await res.json()) as BikeStationsIndex;
+      bikeInfos = idx.stations;
+      networkLayer.setBikeStations(bikeInfos.map((s) => [s.lon, s.lat]));
+    } catch (err) {
+      console.warn("bike stations fetch failed", err);
+    }
+  };
+
+  let bikeStatus = new Map<string, BikeStationStatus>();
+  let bikeStatusAt = 0;
+  const freshBikeStatus = async () => {
+    if (Date.now() - bikeStatusAt >= POLL_MS) {
+      const res = await fetch("/api/bikes");
+      if (res.ok) {
+        const snap = (await res.json()) as BikeSnapshot;
+        bikeStatus = new Map(snap.stations.map((s) => [s.stationId, s]));
+        bikeStatusAt = Date.now();
+      }
+    }
+    return bikeStatus;
+  };
+
+  // One row per field of the /api/bikes entry — a raw dump of the live counts,
+  // to be shaped into a rider-facing layout later.
+  const bikeRows = (
+    info: BikeStationInfo,
+    status: BikeStationStatus | undefined,
+  ) =>
+    status
+      ? [
+          { label: "Classic bikes", value: `${status.classicBikes}` },
+          { label: "Ebikes", value: `${status.ebikes}` },
+          { label: "Parking spaces", value: `${status.docks}` },
+          { label: "Bikes disabled", value: `${status.bikesDisabled ?? 0}` },
+          { label: "Docks disabled", value: `${status.docksDisabled ?? 0}` },
+          { label: "Renting", value: status.renting ? "yes" : "no" },
+          { label: "Returning", value: status.returning ? "yes" : "no" },
+          { label: "Capacity", value: `${info.capacity}` },
+        ]
+      : [{ label: "Live data", value: "unavailable" }];
+
+  let openBikeIndex: number | null = null;
+  const openBikeStation = async (index: number) => {
+    const info = bikeInfos[index];
+    if (!info) return;
+    openBikeIndex = index;
+    // Show the header immediately; the rows fill in when the counts arrive.
+    bikePanel.target = { title: info.name, rows: [] };
+    let status: BikeStationStatus | undefined;
+    try {
+      status = (await freshBikeStatus()).get(info.stationId);
+    } catch (err) {
+      console.warn("bike status fetch failed", err);
+    }
+    // A tap elsewhere may have closed or retargeted the panel mid-fetch.
+    if (openBikeIndex !== index) return;
+    bikePanel.target = { title: info.name, rows: bikeRows(info, status) };
+  };
+  const closeBikePanel = () => {
+    openBikeIndex = null;
+    bikePanel.target = null;
+  };
+  bikePanel.addEventListener("bike-panel-close", () => {
+    openBikeIndex = null;
+  });
+
   map.on("click", (e) => {
+    const r = networkLayer.pick(e.point);
+    if (r?.kind === "bikeStation") {
+      void openBikeStation(r.bikeStationIndex);
+      return;
+    }
+    closeBikePanel();
     // Segment picks are resolvable (toTarget still handles them) but no longer
     // open the inspector — only stations and trains do. A segment click reads as
     // "clicked nothing", deselecting any open panel.
-    const r = networkLayer.pick(e.point);
     openPick = r && r.kind !== "segment" ? r : null;
     syncInspector();
   });
@@ -377,6 +468,10 @@ map.on("load", async () => {
     if (viewMode === "bike") {
       openPick = null;
       syncInspector();
+      void loadBikeStations();
+    } else {
+      // Symmetric with BV-3: a dock modal must not linger over Subway View.
+      closeBikePanel();
     }
   };
 

@@ -52,7 +52,8 @@ type Placement = { x: number; z: number };
 export type PickResult =
   | { kind: "segment"; segmentIndex: number }
   | { kind: "station"; stationIndex: number }
-  | { kind: "train"; tripId: string };
+  | { kind: "train"; tripId: string }
+  | { kind: "bikeStation"; bikeStationIndex: number };
 
 // A single MapLibre custom layer that renders the whole static network in 3D in
 // one shared Three.js scene (doc02.03): route track drawn by a swappable
@@ -111,6 +112,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private viewMode: "subway" | "bike" = "subway";
   private thinNetwork?: THREE.Mesh;
   private smallPucks?: THREE.InstancedMesh;
+  private bikeStations?: THREE.InstancedMesh;
   // The current train core's height — discs and boxes differ, and seating needs it.
   private trainHeight = NETWORK_STYLE.train.height;
 
@@ -188,8 +190,6 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   // frame — no view matrix to undo. Nearest hit wins; invisible meshes (e.g. the
   // trains when toggled off) are skipped by three.
   pick(point: { x: number; y: number }): PickResult | null {
-    // Bike View is inert (doc01.04 BV-2): nothing on the network is pickable.
-    if (this.viewMode === "bike") return null;
     const canvas = this.map.getCanvas();
     const ndcX = (point.x / canvas.clientWidth) * 2 - 1;
     const ndcY = -(point.y / canvas.clientHeight) * 2 + 1;
@@ -198,12 +198,22 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     const far = new THREE.Vector3(ndcX, ndcY, 1).applyMatrix4(inv);
     this.raycaster.set(near, far.sub(near).normalize());
 
-    const targets: THREE.Object3D[] = [...(this.trackBuild?.objects ?? [])];
-    if (this.pucks) targets.push(this.pucks);
-    if (this.trains) targets.push(this.trains);
+    // The subway network is inert in Bike View (doc01.04 BV-2): its meshes leave
+    // the target list entirely, so only the Citi Bike docks are pickable there.
+    const targets: THREE.Object3D[] = [];
+    if (this.viewMode === "bike") {
+      if (this.bikeStations) targets.push(this.bikeStations);
+    } else {
+      targets.push(...(this.trackBuild?.objects ?? []));
+      if (this.pucks) targets.push(this.pucks);
+      if (this.trains) targets.push(this.trains);
+    }
 
     for (const hit of this.raycaster.intersectObjects(targets, false)) {
       const kind = hit.object.userData.kind;
+      if (kind === "bikeStation" && hit.instanceId != null) {
+        return { kind: "bikeStation", bikeStationIndex: hit.instanceId };
+      }
       if (kind === "train" && hit.instanceId != null) {
         const pose = this.currentPoses[hit.instanceId];
         if (pose) return { kind: "train", tripId: pose.tripId };
@@ -467,6 +477,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     if (this.thinNetwork) this.thinNetwork.visible = bike;
     if (this.pucks) this.pucks.visible = !bike;
     if (this.smallPucks) this.smallPucks.visible = bike;
+    if (this.bikeStations) this.bikeStations.visible = bike;
     if (this.trains) {
       this.rebuildTrains(this.trainCapacity);
       this.setTrains(this.currentPoses);
@@ -537,6 +548,43 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     return mesh;
   }
 
+  // Citi Bike docks as one instanced white disc mesh, replacing any previous set
+  // (the dock index refreshes hourly). Seated like the station pucks so the discs
+  // read at the same height; visible only in Bike View, where they are the sole
+  // pick targets (see pick()).
+  setBikeStations(points: LngLat[]): void {
+    if (this.bikeStations) {
+      this.scene.remove(this.bikeStations);
+      this.bikeStations.geometry.dispose();
+    }
+    const style = NETWORK_STYLE.bikeView.bikeStation;
+    const geo = new THREE.CylinderGeometry(
+      style.radius,
+      style.radius,
+      style.height,
+      24,
+    );
+    const mat = new THREE.MeshBasicMaterial({ color: style.color });
+    mat.polygonOffset = true;
+    [mat.polygonOffsetFactor, mat.polygonOffsetUnits] = PUCK_DEPTH_OFFSET;
+    const mesh = new THREE.InstancedMesh(geo, mat, points.length);
+    const centerY =
+      trackTopY() + NETWORK_STYLE.puck.clearanceOverTube - style.height / 2;
+    const m = new THREE.Matrix4();
+    points.forEach((p, i) => {
+      const { x, z } = this.toLocal(p);
+      m.makeTranslation(x, centerY, z);
+      mesh.setMatrixAt(i, m);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.frustumCulled = false;
+    mesh.userData.kind = "bikeStation";
+    mesh.visible = this.viewMode === "bike";
+    this.bikeStations = mesh;
+    this.scene.add(mesh);
+    this.map.triggerRepaint();
+  }
+
   // Enable/disable the scene bloom — the glow that lights the whole network. Off
   // leaves the flat base render (land, track, stations, trains) with no bloom.
   // Not persisted: a reload starts with lighting on.
@@ -576,6 +624,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     for (const obj of this.trackBuild?.objects ?? [])
       obj.visible = !active && subway;
     if (this.thinNetwork) this.thinNetwork.visible = !active && !subway;
+    if (this.bikeStations) this.bikeStations.visible = !active && !subway;
     if (this.trains) this.trains.visible = active ? false : this.trainsVisible;
     this.map.triggerRepaint();
     return active ? this.debugMeshes[this.activeDebug].label : "off";

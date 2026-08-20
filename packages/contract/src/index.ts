@@ -67,6 +67,8 @@ export interface BikeStationStatus {
   /** num_bikes_available minus ebikes — GBFS's total includes ebikes. */
   classicBikes: number;
   docks: number;
+  bikesDisabled: number;
+  docksDisabled: number;
   renting: boolean;
   returning: boolean;
 }
