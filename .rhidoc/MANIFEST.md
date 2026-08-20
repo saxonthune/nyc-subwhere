@@ -45,11 +45,12 @@ Orphaned attachments (non-md files with no corresponding root .md) are reported 
 | doc02.01 | `01-overview.md` | The runtime model — pull-snapshot the feed, interpolate between keyframes; backend fetch loop and the (open) front-end | architecture, overview, realtime, fetch-loop, interpolation | doc02.02, doc01.01 | doc01.03, doc02.03, doc02.04, doc02.06 | — |
 | doc02.02 | `02-mta-resources.md` | Where subway data comes from, its contract and shape, and how a realtime Trip joins static geometry | architecture, mta, gtfs, data-source | doc01.01 | doc02.01, doc02.04, doc02.05, doc02.06 | — |
 | doc02.03 | `03-frontend.md` | The frontend stack — MapLibre + Three.js rendering, built with Vite + TypeScript + Biome, no UI framework | architecture, frontend, rendering, maplibre, threejs, vite, typescript | doc01.01, doc02.01 | doc01.03, doc02.05, doc02.07 | — |
-| doc02.04 | `04-backend.md` | Cloudflare Worker backed by a single Durable Object that polls the MTA feeds on a 30s alarm and publishes the reshaped frame to KV — fan-in, alert-key custody, insulation, and reshape-once | architecture, backend, cloudflare, worker, durable-object, kv, poller | doc02.02, doc02.01 | — | — |
+| doc02.04 | `04-backend.md` | Cloudflare Worker backed by a single Durable Object that polls the MTA feeds on a 30s alarm and publishes the reshaped frame to KV — fan-in, alert-key custody, insulation, and reshape-once | architecture, backend, cloudflare, worker, durable-object, kv, poller | doc02.02, doc02.01 | doc02.09 | — |
 | doc02.05 | `05-geometry-builder.md` | The build-time script that transduces MTA static GTFS into baked web assets — station points, segmented route geometry, and a station→track index — and owns the hard cartography so runtime doesn't | architecture, geometry, build-time, gtfs, script, dev-tooling | doc02.02, doc02.03, doc01.01 | doc01.03, doc02.07, doc02.08 | — |
 | doc02.06 | `06-position-estimation.md` | How accurately a train's position can be recovered from the realtime feed — the one hard fact per poll, the observed events diffing manufactures, the interpolation formula, where delays make position unknowable, and how to fold each new frame into the position already shown (forward-only reconciliation) instead of recomputing it and snapping the train backward | architecture, realtime, interpolation, motion, position, prediction, dead-reckoning, research | doc02.02, doc02.01 | doc02.08 | — |
 | doc02.07 | `07-junction-tessellation.md` | How to render a network of equal-width track ribbons with seamless merges, branches, and grade-separated crossings — the standard GIS buffer→group-by-grade→boolean-union→triangulate pipeline, why junctions fall out of it for free, the offset/join/union/triangulation formulae, and the silhouette-vs-fill split that keeps per-route color | architecture, geometry, rendering, junctions, cartography, research | doc02.05, doc02.03, doc01.03 | doc02.08 | — |
 | doc02.08 | `08-rendering-techniques.md` | A learning-oriented glossary of the graphics and computational-geometry techniques used to draw the network — ribbon offset and boolean union, grade as depth draw-order, transition curves and arc extrapolation, topology inference from polyline soup, linear-reference conform, the caret shader, and the screenshot/debug-pipe tooling. Names the general technique, why it was used here, and where it lives. | graphics, geometry, glossary, rendering, techniques, depth, curves, tessellation, shader | doc02.05, doc02.07, doc02.06 | — | — |
+| doc02.09 | `09-citibike-poller.md` | A second Durable Object polls the Citi Bike GBFS feeds on the backend's alarm pattern and publishes two frames to KV — status split from station info by change rate, ebike counts disambiguated once at the seam | architecture, backend, citibike, gbfs, poller, kv, durable-object | doc02.04 | — | — |
 
 ## Tag Index
 
@@ -57,11 +58,12 @@ Quick lookup for file-path→doc mapping:
 
 | Tag | Relevant Docs |
 |-----|---------------|
-| `architecture` | doc02.01, doc02.02, doc02.03, doc02.04, doc02.05, doc02.06, doc02.07 |
-| `backend` | doc02.04 |
+| `architecture` | doc02.01, doc02.02, doc02.03, doc02.04, doc02.05, doc02.06, doc02.07, doc02.09 |
+| `backend` | doc02.04, doc02.09 |
 | `behaviors` | doc01.03 |
 | `build-time` | doc02.05 |
 | `cartography` | doc02.07 |
+| `citibike` | doc02.09 |
 | `cloudflare` | doc02.04 |
 | `conventions` | doc00.03 |
 | `curves` | doc02.08 |
@@ -70,11 +72,12 @@ Quick lookup for file-path→doc mapping:
 | `depth` | doc02.08 |
 | `dev-tooling` | doc02.05 |
 | `docs` | doc00.01, doc00.02, doc00.03 |
-| `durable-object` | doc02.04 |
+| `durable-object` | doc02.04, doc02.09 |
 | `ears` | doc01.03 |
 | `ethos` | doc01.02 |
 | `fetch-loop` | doc02.01 |
 | `frontend` | doc02.03 |
+| `gbfs` | doc02.09 |
 | `geometry` | doc02.05, doc02.07, doc02.08 |
 | `glossary` | doc01.01, doc02.08 |
 | `graphics` | doc02.08 |
@@ -83,7 +86,7 @@ Quick lookup for file-path→doc mapping:
 | `interaction` | doc01.03 |
 | `interpolation` | doc02.01, doc02.06 |
 | `junctions` | doc02.07 |
-| `kv` | doc02.04 |
+| `kv` | doc02.04, doc02.09 |
 | `maintenance` | doc00.02 |
 | `maplibre` | doc02.03 |
 | `meta` | doc00.01 |
@@ -92,7 +95,7 @@ Quick lookup for file-path→doc mapping:
 | `naming` | doc01.02 |
 | `overview` | doc02.01 |
 | `philosophy` | doc00.02 |
-| `poller` | doc02.04 |
+| `poller` | doc02.04, doc02.09 |
 | `position` | doc02.06 |
 | `prediction` | doc02.06 |
 | `process` | doc01.02 |
