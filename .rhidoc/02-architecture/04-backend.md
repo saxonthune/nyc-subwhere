@@ -1,16 +1,16 @@
 ---
 title: Backend
-summary: Cloudflare Worker as a read-through edge cache in front of the MTA feeds — fan-in, alert-key custody, insulation, and reshape-once
-tags: [architecture, backend, cloudflare, worker, cache, fetch-loop]
+summary: Cloudflare Worker backed by a single Durable Object that polls the MTA feeds on a 30s alarm and publishes the reshaped frame to KV — fan-in, alert-key custody, insulation, and reshape-once
+tags: [architecture, backend, cloudflare, worker, durable-object, kv, poller]
 deps: [doc02.02, doc02.01]
 ---
 
 # Backend
 
-A Cloudflare Worker sits between the front-end and the MTA **Feed** (doc02.02) as a
-**read-through edge cache**. It is not a background poller writing to a bucket: it fetches MTA
-on a cache miss, holds the result at the edge for one regeneration window, and serves every user
-in that window from cache. The runtime model it serves is doc02.01.
+A Cloudflare Worker sits between the front-end and the MTA **Feed** (doc02.02). A single
+**Durable Object** polls every feed on a 30s alarm loop, reshapes the result against a cross-poll
+memory, and publishes the finished frame to **KV**. The request path (`/api/trips`) reads that
+frame straight from KV and never decodes a feed. The runtime model it serves is doc02.01.
 
 ## Why a Seam At All
 
@@ -19,27 +19,38 @@ Direct device-to-MTA polling is technically viable — the feeds need no auth an
 
 - **Fan-in.** Each raw per-line snapshot is the full protobuf blob (every active Trip with its
   whole remaining stop list). N devices polling direct is N× that download and N residential IPs
-  hitting MTA on a tight interval — a throttle/block risk for the whole userbase. The Worker
-  collapses that to ~one MTA request per window.
+  hitting MTA on a tight interval — a throttle/block risk for the whole userbase. The poller
+  collapses that to ~one MTA request per feed per 30s window.
 - **Alert-key custody.** The camsys **Alert** feeds require an API key (doc02.02) that cannot ship
   in a browser. The Worker is the only place it can live.
 - **Insulation.** An MTA endpoint change or outage is fixed in one place and can serve
   last-known-good, instead of breaking every client at once with no hotfix.
-- **Reshape once.** protobuf → renderer contract is computed server-side once per window, not on
-  every device every poll.
+- **Reshape once.** protobuf → renderer contract is computed once per window, not on every device
+  every poll.
 
-## Read-Through Cache, Not a Cron Poller
+## A Single Poller, Not Per-Request Decode
 
-Cloudflare Cron Triggers have a one-minute floor — too slow for the ~30s feed regeneration. So
-the Worker does not loop in the background. Instead, on each front-end request:
+Two platform limits decide the shape:
 
-1. Look up the parsed result in the edge cache (Cache API / KV), keyed by line-feed.
-2. On hit within TTL, serve it. On miss, fetch MTA, decode, trim, store with a short TTL
-   (~20–30s, matched to regeneration — see doc02.02), then serve.
+- The Workers free plan caps CPU at 10 ms per invocation — fetch handler and Cron Trigger alike.
+  Decoding all eight protobuf feeds and reshaping exceeds that, so the decode cannot sit on the
+  request path (it exhausts CPU and returns 503) nor in a cron handler.
+- Cron Triggers have a one-minute floor; the feeds regenerate every ~30s, so a minute is too
+  stale.
 
-A background authoritative poller or history store (a Durable Object alarm to poll sub-minute, or
-a bucket of past snapshots) is added only if the front-end needs history — e.g. smoothing a
-Position Estimate across snapshots. Absent that need, the read-through cache is the whole backend.
+So the decode runs in a Durable Object with a self-rescheduling `alarm()` that fires every 30s,
+fetches the feeds, reshapes, and writes the frame to KV. Being one instance, its cross-poll memory
+— the snapshot-diffing that recovers each Trip's departed stop and detects stalls — is a single
+coherent history; per-request decoding gave each edge isolate its own copy, so the diffs
+disagreed. The memory is persisted to DO storage so it survives eviction between alarms.
+
+A front-end request reads the last published frame from KV and, fire-and-forget, kicks the poller
+awake if it has idled. The alarm reschedules itself, so the loop is self-sustaining once started;
+the kick only bootstraps the first run after a deploy. Before the first frame is published the
+read path returns an empty frame, which the front-end renders as "no trains" and clears on its
+next poll.
+
+The Durable Object and KV together require the Workers Paid plan.
 
 ## Contract Out
 
