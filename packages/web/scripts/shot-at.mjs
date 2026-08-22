@@ -25,6 +25,8 @@ if (!out || !lng || !lat) {
 }
 
 const URL = process.env.SHOT_URL ?? "http://localhost:5173/";
+// SHOT_VIEW=bike switches to Bike View (doc01.04) before the shot.
+const VIEW = process.env.SHOT_VIEW ?? "subway";
 
 const browser = await chromium.launch({
   args: ["--use-gl=angle", "--use-angle=swiftshader", "--ignore-gpu-blocklist"],
@@ -47,6 +49,9 @@ await page.evaluate(
   },
   [Number(lng), Number(lat), Number(zoom), Number(pitch), Number(bearing)],
 );
+
+if (VIEW === "bike")
+  await page.evaluate(() => window.__networkLayer.setViewMode("bike"));
 
 for (let i = 0; i < Number(debugCycles); i++)
   await page.evaluate(() => window.__networkLayer.cycleDebug());

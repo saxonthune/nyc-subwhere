@@ -75,6 +75,11 @@ Concepts the feed has no name for. These are the load-bearing ones to ratify fir
   Segment (0 at the previous Stop, 1 at the next). The core computed output of the app.
 - **Board (proposed)** — the tron-like black canvas the network is drawn on. The single visual
   surface. *(Placeholder name — surface, canvas, map, and grid are alternatives.)*
+- **Subway View (proposed)** — the Board's default presentation: full-width track ribbons,
+  station pucks, elongated train boxes, tap-to-inspect. The subway network is the subject.
+- **Bike View (proposed)** — the Board's alternate presentation: thin lines, small Stations,
+  Trips as small discs, none of them inspectable. The subway network recedes to context
+  (doc01.04).
 
 ## Ambiguity Watch
 

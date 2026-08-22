@@ -137,39 +137,56 @@ if [[ "$VALIDATE_ONLY" == "true" ]]; then
   exit 0
 fi
 
-# ─── Commit Phase Specs to Real Trunk ────────────────────────────────────────
-# Specs must be committed BEFORE the chain worktree is cut, so the chain worktree
-# carries them and the final squash-merge never collides with an untracked spec.
-# The orchestrator owns this commit; the user never hand-commits task files.
-
-SPEC_PATHS=()
-for slug in "${PHASES[@]}"; do
-  rel=".todo-tasks/tasks/${slug}.md"
-  [[ -n "$(git status --porcelain -- "$rel" 2>/dev/null)" ]] && SPEC_PATHS+=("$rel")
-done
-if [[ ${#SPEC_PATHS[@]} -gt 0 ]]; then
-  echo "── Committing ${#SPEC_PATHS[@]} phase spec(s) to trunk ──"
-  git add "${SPEC_PATHS[@]}" 2>/dev/null || true
-  git commit -q -m "todotask: chain specs ${CHAIN_NAME}" -- "${SPEC_PATHS[@]}" 2>/dev/null || true
-  echo ""
-fi
 
 # ─── Create Chain Worktree ──────────────────────────────────────────────────
 
+RESUME_CHAIN=false
+if git worktree list | grep -q "${CHAIN_WORKTREE}" && [[ -d "${CHAIN_RESULTS}" ]]; then
+  for slug in "${PHASES[@]}"; do
+    if [[ "$(classify_task "${CHAIN_RESULTS}/${slug}.agent.md" "${CHAIN_RESULTS}/${slug}.merge.md")" == "$SM_OVERALL_SUCCESS" ]]; then
+      RESUME_CHAIN=true
+      break
+    fi
+  done
+fi
+
 echo "── Creating chain worktree ──"
 
-if git worktree list | grep -q "${CHAIN_WORKTREE}"; then
-  echo "Removing existing chain worktree..."
-  git worktree remove --force "${CHAIN_WORKTREE}" 2>/dev/null || true
+if [[ "$RESUME_CHAIN" == "true" ]]; then
+  echo "Existing chain worktree has completed phases — resuming and preserving work."
+  echo "Chain worktree: ${CHAIN_WORKTREE}"
+  echo ""
+else
+  if git worktree list | grep -q "${CHAIN_WORKTREE}"; then
+    echo "Removing existing chain worktree..."
+    git worktree remove --force "${CHAIN_WORKTREE}" 2>/dev/null || true
+  fi
+
+  if git branch --list "${CHAIN_BRANCH}" | grep -q "${CHAIN_BRANCH}"; then
+    echo "Deleting existing chain branch..."
+    git branch -D "${CHAIN_BRANCH}" 2>/dev/null || true
+  fi
+
+  git worktree add -b "${CHAIN_BRANCH}" "${CHAIN_WORKTREE}" "${REAL_TRUNK}"
+  echo "Chain worktree created at ${CHAIN_WORKTREE}"
+  echo ""
 fi
 
-if git branch --list "${CHAIN_BRANCH}" | grep -q "${CHAIN_BRANCH}"; then
-  echo "Deleting existing chain branch..."
-  git branch -D "${CHAIN_BRANCH}" 2>/dev/null || true
-fi
+# ─── Copy Phase Specs into the Chain Worktree ────────────────────────────────
+# From phase 2 on, execute-plan.sh is launched with the chain worktree as its
+# CWD, so its own `git rev-parse --show-toplevel` resolves there and it looks
+# for the spec under the chain worktree rather than the real trunk. The specs
+# are ignored and so absent from a fresh worktree — copy them in.
+#
+# This replaces committing the specs to trunk, which is how they used to reach
+# the chain worktree and which cost trunk a commit per chain.
 
-git worktree add -b "${CHAIN_BRANCH}" "${CHAIN_WORKTREE}" "${REAL_TRUNK}"
-echo "Chain worktree created at ${CHAIN_WORKTREE}"
+echo "── Copying ${#PHASES[@]} phase spec(s) into chain worktree ──"
+mkdir -p "${CHAIN_WORKTREE}/.todo-tasks/tasks"
+for slug in "${PHASES[@]}"; do
+  src="${TODO}/tasks/${slug}.md"
+  [[ -f "$src" ]] && cp "$src" "${CHAIN_WORKTREE}/.todo-tasks/tasks/${slug}.md"
+done
 echo ""
 
 # ─── Write Chain Run-record ──────────────────────────────────────────────────
@@ -208,6 +225,9 @@ for i in "${!PHASES[@]}"; do
        --trunk-branch "${CHAIN_BRANCH}" \
        --no-guard; then
     echo "Phase ${slug} succeeded."
+  elif [[ "$(classify_task "${CHAIN_RESULTS}/${slug}.agent.md" "${CHAIN_RESULTS}/${slug}.merge.md")" == "$SM_OVERALL_SUCCESS" ]]; then
+    echo "Phase ${slug} exited non-zero but its result files classify success"
+    echo "(merged cleanly into the chain branch). Treating phase as succeeded and continuing."
   else
     echo "Phase ${slug} failed. Stopping chain."
     echo ""
@@ -290,7 +310,6 @@ mapfile -t CHAIN_PATHS < <(git diff --name-only "${REAL_TRUNK}...${CHAIN_BRANCH}
 do_post_merge_success() {
   local chain_def="${TODO}/chains/${CHAIN_NAME}.md"
   write_chain_definition "$chain_def" "$CHAIN_NAME" "$PHASES_CSV" "$AFTER"
-  git add "$chain_def" && git commit -m "todotask: chain definition ${CHAIN_NAME}" >/dev/null 2>&1 || true
   echo "Wrote chain definition: ${chain_def}"
 
   echo "── Cleaning up chain worktree ──"

@@ -1,4 +1,9 @@
-import type { RenderSnapshot } from "@nyc-subwhere/contract";
+import type {
+  BikeSnapshot,
+  BikeStationsIndex,
+  RenderSnapshot,
+} from "@nyc-subwhere/contract";
+import { pollBikeSnapshot, pollBikeStations } from "./bikes.js";
 import { pollSnapshot } from "./poll.js";
 import type { TripMem, TripMemory } from "./reshape.js";
 
@@ -9,10 +14,16 @@ const SNAPSHOT_KEY = "trips:snapshot";
 // Durable Object instance.
 const POLLER_NAME = "singleton";
 
+const BIKE_SNAPSHOT_KEY = "bikes:snapshot";
+const BIKE_STATIONS_KEY = "bikes:stations";
+// Station identity (doc02.09) changes seasonally, unlike the 30s live counts.
+const STATIONS_REFRESH_MS = 300_000;
+
 export interface Env {
   ASSETS: Fetcher;
   SNAPSHOT: KVNamespace;
   FEED_POLLER: DurableObjectNamespace;
+  BIKE_POLLER: DurableObjectNamespace;
 }
 
 export default {
@@ -45,6 +56,50 @@ export default {
         headers: {
           "content-type": "application/json",
           "cache-control": "no-store",
+        },
+      });
+    }
+
+    if (url.pathname === "/api/bikes") {
+      const poller = env.BIKE_POLLER.get(
+        env.BIKE_POLLER.idFromName(POLLER_NAME),
+      );
+      ctx.waitUntil(poller.fetch("https://poller/kick"));
+
+      const cached = await env.SNAPSHOT.get(BIKE_SNAPSHOT_KEY);
+      if (cached == null) {
+        const warming: BikeSnapshot = { asOf: Date.now(), stations: [] };
+        return Response.json(warming, {
+          headers: { "cache-control": "no-store" },
+        });
+      }
+      return new Response(cached, {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        },
+      });
+    }
+
+    if (url.pathname === "/api/bike-stations") {
+      const poller = env.BIKE_POLLER.get(
+        env.BIKE_POLLER.idFromName(POLLER_NAME),
+      );
+      ctx.waitUntil(poller.fetch("https://poller/kick"));
+
+      const cached = await env.SNAPSHOT.get(BIKE_STATIONS_KEY);
+      if (cached == null) {
+        // Hourly-refresh frame: served no-store while empty so a client that
+        // hits the warming case retries soon rather than caching a mile-wide gap.
+        const warming: BikeStationsIndex = { asOf: Date.now(), stations: [] };
+        return Response.json(warming, {
+          headers: { "cache-control": "no-store" },
+        });
+      }
+      return new Response(cached, {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "max-age=300",
         },
       });
     }
@@ -98,5 +153,46 @@ export class FeedPoller implements DurableObject {
       this.memory = new Map(stored ?? []);
     }
     return this.memory;
+  }
+}
+
+// Second poller for the Citi Bike GBFS feeds (doc02.09). Deliberately
+// duplicates FeedPoller's kick/alarm boilerplate rather than sharing a base
+// class — the two pollers share a pattern, not a future.
+export class BikePoller implements DurableObject {
+  constructor(
+    private state: DurableObjectState,
+    private env: Env,
+  ) {}
+
+  async fetch(_request: Request): Promise<Response> {
+    if ((await this.state.storage.getAlarm()) == null) {
+      await this.state.storage.setAlarm(Date.now());
+    }
+    return new Response(null, { status: 204 });
+  }
+
+  async alarm(): Promise<void> {
+    try {
+      const snap = await pollBikeSnapshot();
+      if (snap != null) {
+        await this.env.SNAPSHOT.put(BIKE_SNAPSHOT_KEY, JSON.stringify(snap));
+      }
+
+      const stationsAt =
+        (await this.state.storage.get<number>("stationsAt")) ?? 0;
+      if (Date.now() - stationsAt >= STATIONS_REFRESH_MS) {
+        const stations = await pollBikeStations();
+        if (stations != null) {
+          await this.env.SNAPSHOT.put(
+            BIKE_STATIONS_KEY,
+            JSON.stringify(stations),
+          );
+          await this.state.storage.put("stationsAt", Date.now());
+        }
+      }
+    } finally {
+      await this.state.storage.setAlarm(Date.now() + POLL_INTERVAL_MS);
+    }
   }
 }

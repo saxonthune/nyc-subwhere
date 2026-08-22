@@ -55,6 +55,43 @@ export interface StopArrival {
   departure: EpochMs | null;
 }
 
+// --- Bike share live frame (doc02.09) ------------------------------------
+// Citi Bike GBFS, trimmed and disambiguated the same way as the subway frame
+// above: the read path serves these straight from KV, never touching GBFS.
+
+/** Live per-dock counts, trimmed from GBFS station_status (doc02.09). */
+export interface BikeStationStatus {
+  stationId: string;
+  /** num_ebikes_available, verbatim. */
+  ebikes: number;
+  /** num_bikes_available minus ebikes — GBFS's total includes ebikes. */
+  classicBikes: number;
+  docks: number;
+  bikesDisabled: number;
+  docksDisabled: number;
+  renting: boolean;
+  returning: boolean;
+}
+
+export interface BikeSnapshot {
+  asOf: EpochMs;
+  stations: BikeStationStatus[];
+}
+
+/** Per-dock identity from GBFS station_information; changes seasonally. */
+export interface BikeStationInfo {
+  stationId: string;
+  name: string;
+  lat: number;
+  lon: number;
+  capacity: number;
+}
+
+export interface BikeStationsIndex {
+  asOf: EpochMs;
+  stations: BikeStationInfo[];
+}
+
 // --- Baked map geometry (doc02.05) --------------------------------------
 // Produced at build time by @nyc-subwhere/geometry, consumed at runtime by
 // @nyc-subwhere/web. The worker does not read these; it only ships live
@@ -181,6 +218,16 @@ export interface DebugLayer {
 }
 export interface DebugGraph {
   layers: DebugLayer[];
+}
+
+// --- Street grid (Bike View backdrop) ------------------------------------
+// The baked NYC street network (build-streets.ts, from an OpenStreetMap
+// extract): polylines grouped into tiers by road class, so the renderer can
+// hide the small-street tiers when zoomed out. Tier order is fixed, largest
+// roads first: 0 = motorway/trunk, 1 = primary/secondary, 2 = local streets.
+
+export interface StreetGrid {
+  tiers: LngLat[][][];
 }
 
 // --- Linear-reference index (motion) ------------------------------------

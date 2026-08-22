@@ -35,6 +35,10 @@ readonly SM_OVERALL_BUILD_FAIL="build_failure"
 readonly SM_OVERALL_SESSION_FAIL="session_failed"
 readonly SM_OVERALL_SALVAGEABLE="salvageable"
 
+# Archive disposition (recorded by archive.sh, read by report.sh:emit_archived).
+# Resolved archives reuse SM_OVERALL_SUCCESS ("success"); abandoned ones use this.
+readonly SM_ARCHIVE_ABANDONED="abandoned"
+
 # Buckets (for dashboard grouping)
 readonly SM_BUCKET_SUCCESS="success"
 readonly SM_BUCKET_READY="ready_for_review"
@@ -155,20 +159,25 @@ chain_state_bucket() {
   esac
 }
 
-# chain_merged_on_trunk <repo_root> <phases_csv> — true iff every phase's agent result
-# is present on trunk HEAD (a squash-merge of the chain branch brings them to trunk).
+# chain_merged_on_trunk <repo_root> <chain_branch> — true iff trunk HEAD already
+# carries the chain branch's content.
+#
+# A squash-merge leaves no ancestry link, so `git merge-base --is-ancestor` cannot
+# answer this; comparing the trees can. Empty diff means every change on the branch
+# is present on trunk, which is exactly what a completed squash-merge produces.
+#
+# This used to probe for each phase's committed agent.md under HEAD. Results are
+# no longer committed, so that test would now report every chain as unmerged.
 chain_merged_on_trunk() {
-  local repo="$1" phases="$2" p
-  for p in ${phases//,/ }; do
-    [[ -n "$p" ]] || continue
-    git -C "$repo" cat-file -e "HEAD:.todo-tasks/results/${p}.agent.md" 2>/dev/null || return 1
-  done
-  return 0
+  local repo="$1" branch="$2"
+  [[ -n "$branch" ]] || return 1
+  git -C "$repo" rev-parse --verify --quiet "$branch" >/dev/null || return 1
+  git -C "$repo" diff --quiet HEAD "$branch" -- 2>/dev/null
 }
 
 # write_chain_definition <dest_path> <name> <phases_csv> [after] — writes the trunk
-# chain definition file (does not commit; caller commits). Byte-compatible with the
-# block in execute-chain.sh:do_post_merge_success.
+# chain definition file. The path is ignored, so nothing is committed. Byte-compatible
+# with the block in execute-chain.sh:do_post_merge_success.
 write_chain_definition() {
   local dest_path="$1" name="$2" phases_csv="$3" after="${4:-}"
   mkdir -p "$(dirname "$dest_path")"
@@ -193,7 +202,8 @@ write_chain_definition() {
 # source_task_config
 # Sources project-specific config, then sets defaults for any unset variables.
 # Reads: REPO_ROOT, SCRIPT_DIR (from caller scope)
-# Sets: WORKTREE_PREFIX, REPO_NAME, MAX_BUDGET, RETRY_BUDGET, MAX_RETRIES
+# Sets: WORKTREE_PREFIX, REPO_NAME, MAX_BUDGET, RETRY_BUDGET, MAX_RETRIES,
+#   TODO_TASK_PROVIDER
 source_task_config() {
   if [[ -f "${REPO_ROOT}/.todo-tasks/task-config.sh" ]]; then
     source "${REPO_ROOT}/.todo-tasks/task-config.sh"
@@ -202,10 +212,11 @@ source_task_config() {
   fi
   WORKTREE_PREFIX="${WORKTREE_PREFIX:-todotask}"
   REPO_NAME="$(basename "${REPO_ROOT}")"
-  MAX_BUDGET="${MAX_BUDGET:-5.00}"
-  RETRY_BUDGET="${RETRY_BUDGET:-3.00}"
+  MAX_BUDGET="${MAX_BUDGET:-10.00}"
+  RETRY_BUDGET="${RETRY_BUDGET:-6.00}"
   MAX_RETRIES="${MAX_RETRIES:-4}"
-  MAX_TURNS="${MAX_TURNS:-100}"
+  MAX_TURNS="${MAX_TURNS:-200}"
+  TODO_TASK_PROVIDER="${TODO_TASK_PROVIDER:-claude}"
 }
 
 # summarize_uncommitted <dir>

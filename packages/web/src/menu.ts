@@ -1,4 +1,5 @@
 import { LitElement, css, html, nothing } from "lit";
+import { bikingIcon, locateIcon, subwayIcon } from "./icons";
 
 export interface MenuOption {
   label: string;
@@ -14,11 +15,25 @@ export class Menu extends LitElement {
     options: { attribute: false },
     open: { attribute: false, type: Boolean },
     nextUpdateAt: { attribute: false, type: Number },
+    viewMode: { attribute: false },
+    onViewToggle: { attribute: false },
+    nudgeVisible: { attribute: false, type: Boolean },
+    onNudgeDismiss: { attribute: false },
+    locateVisible: { attribute: false, type: Boolean },
+    onLocate: { attribute: false },
   };
   declare options: MenuOption[];
   declare open: boolean;
   /** Epoch ms of the next data poll; 0 until the first poll is scheduled. */
   declare nextUpdateAt: number;
+  declare viewMode: "subway" | "bike";
+  declare onViewToggle?: () => void;
+  /** Interaction nudge shown above the bar at load (doc01.04 NG-1). */
+  declare nudgeVisible: boolean;
+  declare onNudgeDismiss?: () => void;
+  /** Center-on-location button, shown only while location is enabled. */
+  declare locateVisible: boolean;
+  declare onLocate?: () => void;
 
   private tick?: ReturnType<typeof setInterval>;
 
@@ -27,6 +42,9 @@ export class Menu extends LitElement {
     this.options = [];
     this.open = false;
     this.nextUpdateAt = 0;
+    this.viewMode = "subway";
+    this.nudgeVisible = false;
+    this.locateVisible = false;
   }
 
   // The countdown is derived from wall-clock, so re-render once a second rather
@@ -93,6 +111,23 @@ export class Menu extends LitElement {
       align-items: center;
       gap: 8px;
     }
+    .icon {
+      width: 16px;
+      height: 16px;
+      display: block;
+    }
+    .locate {
+      line-height: 1;
+    }
+    .nudge {
+      cursor: pointer;
+      color: #eaf3ff;
+      background: rgba(46, 92, 150, 0.55);
+      border: 1px solid rgba(140, 190, 255, 0.4);
+      border-radius: 6px;
+      padding: 8px 12px;
+      max-width: 260px;
+    }
     .countdown {
       color: #b8b8b8;
       background: rgba(18, 18, 20, 0.92);
@@ -137,6 +172,13 @@ export class Menu extends LitElement {
     const cd = this.countdown();
     return html`
       ${
+        this.nudgeVisible
+          ? html`<div class="nudge" @click=${() => this.onNudgeDismiss?.()}>
+            Hint: tap a train or station
+          </div>`
+          : nothing
+      }
+      ${
         this.open
           ? html`<div class="panel">
             ${this.options.map(
@@ -149,6 +191,27 @@ export class Menu extends LitElement {
         <button class="toggle" @click=${this.toggle}>
           <span class="full">Menu</span><span class="short">☰</span>
         </button>
+        <button class="toggle" @click=${() => this.onViewToggle?.()}>
+          <span class="full">${
+            // The label names the view a press switches TO (doc01.04 TG-3).
+            this.viewMode === "subway" ? "Bike view" : "Subway view"
+          }</span
+          ><span class="short"
+            >${this.viewMode === "subway" ? bikingIcon : subwayIcon}</span
+          >
+        </button>
+        ${
+          this.locateVisible
+            ? html`<button
+              class="toggle locate"
+              title="Center on my location"
+              aria-label="Center on my location"
+              @click=${() => this.onLocate?.()}
+            >
+              ${locateIcon}
+            </button>`
+            : nothing
+        }
         <span class="countdown">
           <span class="full">${cd.full}</span><span class="short">${cd.short}</span>
         </span>
