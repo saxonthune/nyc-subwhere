@@ -233,6 +233,21 @@ export const NETWORK_STYLE = {
     },
   },
 
+  // Live user-location marker (user-marker.ts): a blue disc seated like the
+  // dock discs, plus — when the device has a compass — a flat arrowhead
+  // hovering off the rim, pointing the device's true heading. Meters, like
+  // everything here; below its natural size the marker counterscales so it
+  // never drops under `screenPx` pixels across on screen.
+  userMarker: {
+    color: "#2f8fff",
+    radius: 14,
+    height: 4,
+    // Arrowhead: base `halfWidth` wide, `length` long, its base `standoff`
+    // meters off the disc rim, extruded `height` up.
+    triangle: { length: 14, halfWidth: 9, standoff: 4, height: 3 },
+    screenPx: 20,
+  },
+
   // 3D station geometry (doc02.03), rendered in a Three.js custom layer. Sizes are
   // in meters (the layer builds meshes in a meter-scaled local frame). The puck is
   // a flat disc sitting at ground level, shown at every zoom.

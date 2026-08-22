@@ -1,4 +1,5 @@
 import { LitElement, css, html, nothing } from "lit";
+import { bikingIcon, locateIcon, subwayIcon } from "./icons";
 
 export interface MenuOption {
   label: string;
@@ -18,6 +19,8 @@ export class Menu extends LitElement {
     onViewToggle: { attribute: false },
     nudgeVisible: { attribute: false, type: Boolean },
     onNudgeDismiss: { attribute: false },
+    locateVisible: { attribute: false, type: Boolean },
+    onLocate: { attribute: false },
   };
   declare options: MenuOption[];
   declare open: boolean;
@@ -28,6 +31,9 @@ export class Menu extends LitElement {
   /** Interaction nudge shown above the bar at load (doc01.04 NG-1). */
   declare nudgeVisible: boolean;
   declare onNudgeDismiss?: () => void;
+  /** Center-on-location button, shown only while location is enabled. */
+  declare locateVisible: boolean;
+  declare onLocate?: () => void;
 
   private tick?: ReturnType<typeof setInterval>;
 
@@ -38,6 +44,7 @@ export class Menu extends LitElement {
     this.nextUpdateAt = 0;
     this.viewMode = "subway";
     this.nudgeVisible = false;
+    this.locateVisible = false;
   }
 
   // The countdown is derived from wall-clock, so re-render once a second rather
@@ -103,6 +110,14 @@ export class Menu extends LitElement {
       display: flex;
       align-items: center;
       gap: 8px;
+    }
+    .icon {
+      width: 16px;
+      height: 16px;
+      display: block;
+    }
+    .locate {
+      line-height: 1;
     }
     .nudge {
       cursor: pointer;
@@ -181,8 +196,22 @@ export class Menu extends LitElement {
             // The label names the view a press switches TO (doc01.04 TG-3).
             this.viewMode === "subway" ? "Bike view" : "Subway view"
           }</span
-          ><span class="short">${this.viewMode === "subway" ? "🚲" : "🚇"}</span>
+          ><span class="short"
+            >${this.viewMode === "subway" ? bikingIcon : subwayIcon}</span
+          >
         </button>
+        ${
+          this.locateVisible
+            ? html`<button
+              class="toggle locate"
+              title="Center on my location"
+              aria-label="Center on my location"
+              @click=${() => this.onLocate?.()}
+            >
+              ${locateIcon}
+            </button>`
+            : nothing
+        }
         <span class="countdown">
           <span class="full">${cd.full}</span><span class="short">${cd.short}</span>
         </span>

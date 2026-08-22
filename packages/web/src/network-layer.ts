@@ -25,6 +25,7 @@ import {
   createGlow,
 } from "./train-glow";
 import type { TrainPose } from "./trains";
+import { UserMarker } from "./user-marker";
 
 // three.js render layer the train boxes (and Bike View's docks) also live on,
 // so the bloom effect and the cel outline pass can render just them by
@@ -132,6 +133,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private bikePlacements: Placement[] = [];
   private bikeScoreboards?: BikeScoreboards;
   private bikeGauges?: BikeDiscGauges;
+  private userMarker?: UserMarker;
   // One merged ribbon mesh per street tier (built lazily with the rest of Bike
   // View); visibility is mode × zoom × debug, resolved in syncStreetVisibility.
   private streetTiers: THREE.Mesh[] = [];
@@ -286,6 +288,18 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     // Keep the dock scoreboards facing the camera; bearing only changes during
     // camera interaction, which is already repainting.
     this.bikeScoreboards?.setBearing(this.map.getBearing());
+
+    // Counterscale the user marker so it never drops under screenPx pixels
+    // across, clamped at 1 so up close it keeps its natural meter size. Free:
+    // this runs inside renders the map was doing anyway, and a still camera
+    // means a still scale.
+    if (this.userMarker) {
+      const um = NETWORK_STYLE.userMarker;
+      const mpp = this.metersPerPixel(this.map.getZoom());
+      this.userMarker.setScale(
+        Math.max(1, (um.screenPx * mpp) / (2 * um.radius)),
+      );
+    }
 
     this.renderer.resetState();
     this.glow.render(
@@ -886,6 +900,31 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     if (this.bikeGauges) this.bikeGauges.group.visible = show;
     if (this.bikeStations)
       this.bikeStations.visible = show && !this.bikeScoreboards;
+  }
+
+  // The user's live position (user-location.ts drives this): built lazily on
+  // the first fix, moved on later ones, dropped on null. Shown in both views —
+  // it is the user, not part of either representation. On the train layer for
+  // the cel outline; never a pick target (pick() lists its targets explicitly).
+  setUserLocation(
+    lngLat: LngLat | null,
+    headingDeg: number | null = null,
+  ): void {
+    if (!lngLat) {
+      if (!this.userMarker) return;
+      this.userMarker.dispose();
+      this.userMarker = undefined;
+      this.map.triggerRepaint();
+      return;
+    }
+    if (!this.userMarker) {
+      this.userMarker = new UserMarker(TRAIN_DEPTH_OFFSET, TRAIN_LAYER);
+      this.scene.add(this.userMarker.group);
+    }
+    const { x, z } = this.toLocal(lngLat);
+    this.userMarker.setPosition(x, z);
+    this.userMarker.setHeading(headingDeg);
+    this.map.triggerRepaint();
   }
 
   // Enable/disable the scene bloom — the glow that lights the whole network. Off

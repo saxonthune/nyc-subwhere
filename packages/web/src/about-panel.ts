@@ -87,6 +87,16 @@ export class AboutPanel extends LitElement {
         </header>
         <div class="body">
           <p>
+            © 2026 Saxon Thune ·
+            <a
+              href="https://github.com/saxonthune/nyc-subwhere"
+              target="_blank"
+              >Source on GitHub</a
+            >
+            ·
+            <a href="https://saxon.zone" target="_blank">saxon.zone</a>
+          </p>
+          <p>
             Subway data from the
             <a href="https://www.mta.info/developers" target="_blank"
               >MTA</a
@@ -112,6 +122,17 @@ export class AboutPanel extends LitElement {
             <a href="https://opendata.cityofnewyork.us/" target="_blank"
               >NYC Open Data</a
             >.
+          </p>
+          <p>
+            Icons by
+            <a href="https://fontawesome.com" target="_blank"
+              >Font Awesome Free</a
+            >
+            (<a
+              href="https://creativecommons.org/licenses/by/4.0/"
+              target="_blank"
+              >CC BY 4.0</a
+            >).
           </p>
         </div>
       </div>

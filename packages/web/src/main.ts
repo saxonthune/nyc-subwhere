@@ -40,6 +40,7 @@ import {
 import { predictionErrors } from "./prediction-error";
 import { StatsPanel } from "./stats-panel";
 import { TripEstimator, colorFor, indexTracks, resolveTrip } from "./trains";
+import { UserLocationTracker } from "./user-location";
 
 const container = document.getElementById("map");
 
@@ -216,6 +217,44 @@ map.on("load", async () => {
       },
     },
   ];
+  // User location (user-location.ts): the menu button requests the browser
+  // permissions and feeds the blue marker in the scene; its label doubles as
+  // the state readout. The menu re-renders on its own 1s tick, so mutating the
+  // label in place is enough.
+  const locationOption = {
+    label: "Enable location",
+    onSelect: () => {
+      if (locationTracker.active) {
+        locationTracker.disable();
+        locationOption.label = "Enable location";
+        menu.locateVisible = false;
+      } else {
+        locationOption.label = "Location: on";
+        menu.locateVisible = true;
+        void locationTracker.enable();
+      }
+      menu.requestUpdate();
+    },
+  };
+  let lastLocation: [number, number] | null = null;
+  const locationTracker = new UserLocationTracker(
+    (u) => {
+      lastLocation = u?.lngLat ?? null;
+      networkLayer.setUserLocation(lastLocation, u?.headingDeg ?? null);
+    },
+    () => {
+      locationOption.label = "Location: blocked";
+      menu.locateVisible = false;
+      menu.requestUpdate();
+    },
+  );
+  // Bar button next to the view toggle: recenter on the marker, keeping the
+  // current zoom/pitch/bearing. A no-op until the first fix lands.
+  menu.onLocate = () => {
+    if (lastLocation) map.flyTo({ center: lastLocation });
+  };
+  menu.options = [...menu.options, locationOption];
+
   // Debug views (doc02.07): one exclusive cycle over the pipeline's published debug layers —
   // selecting one hides the tracks and draws that stage's centerlines as skinny pipes. Only shown
   // when the bake published layers. The label reflects the active view; the menu re-renders on its
