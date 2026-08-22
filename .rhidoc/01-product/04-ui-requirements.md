@@ -57,12 +57,14 @@ information is belongs to its own doc, not this one.
 
 ## Interaction nudge (NG)
 
-- **NG-1.** At load, the system shall show a banner above the row with UI/menu
-  items, styled to read as an informational nudge, with content inviting the
-  user to interact with the map.
-- **NG-2.** The system shall dismiss the nudge banner when the user taps a Trip,
-  taps a Station, taps any UI element (including the banner itself), or when 10
-  seconds have elapsed since it appeared — whichever happens first.
+- **NG-1.** After a delay from load, the system shall show a banner above the
+  row with UI/menu items, styled to read as an informational nudge, with
+  content inviting the user to interact with the map.
+- **NG-2.** If, before the banner would appear, the user taps a Trip, taps a
+  Station, or taps any UI element, the system shall skip showing the banner.
+- **NG-3.** Once shown, the system shall dismiss the nudge banner when the user
+  taps a Trip, taps a Station, taps any UI element (including the banner
+  itself), or when a further delay elapses — whichever happens first.
 
 ## Input-command bindings
 
@@ -72,6 +74,6 @@ binds one input to the command it performs and the requirement it serves.
 | Target | Interaction | Action | Req |
 |---|---|---|---|
 | View toggle | tap | Switch to the other view; close any open inspector | TG-2, BV-3 |
-| Station or Trip (Subway View) | tap | Open the inspector on it; dismiss the nudge banner | SV-2, NG-2 |
-| Any UI element, including the nudge banner | tap | Dismiss the nudge banner | NG-2 |
+| Station or Trip (Subway View) | tap | Open the inspector on it; skip or dismiss the nudge banner | SV-2, NG-2, NG-3 |
+| Any UI element, including the nudge banner | tap | Skip or dismiss the nudge banner | NG-2, NG-3 |
 | Station, Trip, or line (Bike View) | tap | Nothing | BV-2 |

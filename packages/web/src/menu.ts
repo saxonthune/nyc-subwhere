@@ -159,7 +159,7 @@ export class Menu extends LitElement {
       ${
         this.nudgeVisible
           ? html`<div class="nudge" @click=${() => this.onNudgeDismiss?.()}>
-            Tap on a train or station for trip details
+            Hint: tap a train or station
           </div>`
           : nothing
       }

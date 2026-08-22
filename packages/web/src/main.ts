@@ -11,13 +11,16 @@ import type {
   RenderSnapshot,
   SegmentProperties,
   StationProperties,
+  StreetGrid,
   TrackGraph,
   TrackIndex,
 } from "@nyc-subwhere/contract";
+import { AboutPanel } from "./about-panel";
 import boroughsUrl from "./assets/boroughs.geojson?url";
 import debugGraphUrl from "./assets/debug-graph.json?url";
 import segmentsUrl from "./assets/segments.geojson?url";
 import stationsUrl from "./assets/stations.geojson?url";
+import streetsUrl from "./assets/streets.json?url";
 import trackGraphUrl from "./assets/track-graph.json?url";
 import trackIndexUrl from "./assets/track-index.json?url";
 import { BikePanel } from "./bike-panel";
@@ -44,14 +47,48 @@ if (!container) {
   throw new Error("#map container not found");
 }
 
+// Dev-only reload ergonomics: an edit makes Vite reload the whole page, so the
+// camera pose and view mode are stashed in sessionStorage as they change and
+// restored on startup. import.meta.env.DEV is statically false in production
+// builds, so all of this drops out of the bundle there.
+interface DevViewState {
+  center: [number, number];
+  zoom: number;
+  pitch: number;
+  bearing: number;
+  view: "subway" | "bike";
+}
+const DEV_STATE_KEY = "dev-view-state";
+const devState = ((): DevViewState | null => {
+  if (!import.meta.env.DEV) return null;
+  try {
+    const raw = sessionStorage.getItem(DEV_STATE_KEY);
+    return raw ? (JSON.parse(raw) as DevViewState) : null;
+  } catch {
+    return null;
+  }
+})();
+const saveDevState = (view: "subway" | "bike") => {
+  if (!import.meta.env.DEV) return;
+  const c = map.getCenter();
+  const state: DevViewState = {
+    center: [c.lng, c.lat],
+    zoom: map.getZoom(),
+    pitch: map.getPitch(),
+    bearing: map.getBearing(),
+    view,
+  };
+  sessionStorage.setItem(DEV_STATE_KEY, JSON.stringify(state));
+};
+
 // Tron view: no basemap tiles — a black background the network draws onto.
 // The street-map toggle (doc02.03) later layers a dark vector basemap beneath this.
 const map = new maplibregl.Map({
   container,
-  center: [-73.9902, 40.72655],
-  zoom: 12.29,
-  pitch: 55,
-  bearing: 22,
+  center: devState?.center ?? [-73.9902, 40.72655],
+  zoom: devState?.zoom ?? 12.29,
+  pitch: devState?.pitch ?? 55,
+  bearing: devState?.bearing ?? 22,
   // MSAA lives on the GL context, which MapLibre owns — the Three custom layer
   // shares this context, so setting antialias on THREE.WebGLRenderer is a no-op.
   // On mobile tile-based GPUs this resolves on-tile, so it's nearly free.
@@ -87,14 +124,21 @@ map.on("load", async () => {
   // 3D route tubes + station pucks + platform boxes (doc02.03) in a Three.js
   // custom layer. Fetch the baked geometry once; it is static. Segments give
   // each station's track bearing so its box lies parallel to the track.
-  const [stationsRes, segmentsRes, boroughsRes, graphRes, debugRes] =
-    await Promise.all([
-      fetch(stationsUrl),
-      fetch(segmentsUrl),
-      fetch(boroughsUrl),
-      fetch(trackGraphUrl),
-      fetch(debugGraphUrl),
-    ]);
+  const [
+    stationsRes,
+    segmentsRes,
+    boroughsRes,
+    graphRes,
+    debugRes,
+    streetsRes,
+  ] = await Promise.all([
+    fetch(stationsUrl),
+    fetch(segmentsUrl),
+    fetch(boroughsUrl),
+    fetch(trackGraphUrl),
+    fetch(debugGraphUrl),
+    fetch(streetsUrl),
+  ]);
   const stationsGeo = (await stationsRes.json()) as {
     features: {
       geometry: { coordinates: [number, number] };
@@ -112,6 +156,7 @@ map.on("load", async () => {
   };
   const graph = (await graphRes.json()) as TrackGraph;
   const debug = (await debugRes.json()) as DebugGraph;
+  const streets = (await streetsRes.json()) as StreetGrid;
   const lngLats = stationsGeo.features.map((f) => f.geometry.coordinates);
   const segments = segmentsGeo.features.map((f) => ({
     points: f.geometry.coordinates,
@@ -124,6 +169,7 @@ map.on("load", async () => {
     graph,
     boroughs,
     debug,
+    streets,
   );
   map.addLayer(networkLayer);
   // Debug hook (doc02.07): expose the layer so the screenshot harness can drive cycleDebug() to
@@ -150,6 +196,8 @@ map.on("load", async () => {
     };
   };
   map.on("move", syncCamera);
+  const aboutPanel = new AboutPanel();
+  document.body.append(aboutPanel);
   const menu = new Menu();
   menu.options = [
     { label: "Toggle trains", onSelect: () => networkLayer.toggleTrains() },
@@ -159,6 +207,12 @@ map.on("load", async () => {
       onSelect: () => {
         statsPanel.open = !statsPanel.open;
         syncCamera();
+      },
+    },
+    {
+      label: "About",
+      onSelect: () => {
+        aboutPanel.open = !aboutPanel.open;
       },
     },
   ];
@@ -178,23 +232,33 @@ map.on("load", async () => {
   }
   document.body.append(statsPanel, menu);
 
-  // Interaction nudge (doc01.04 NG-1/NG-2): shown once at load, above the bar;
-  // dismissed by a Trip/Station tap (map.on("click") below), any UI tap (the
-  // capture listener below fires for anything outside the map canvas, which
-  // covers the banner itself), or a 10s timeout — whichever comes first.
-  menu.nudgeVisible = true;
-  const nudgeTimer = setTimeout(dismissNudge, 10_000);
-  function dismissNudge() {
-    if (!menu.nudgeVisible) return;
-    menu.nudgeVisible = false;
+  // Interaction nudge (doc01.04 NG): appears above the bar after a delay from
+  // load, stays for a further delay, then hides. A Trip/Station tap
+  // (map.on("click") below) or any UI tap (the capture listener below fires
+  // for anything outside the map canvas, which covers the banner itself) cuts
+  // it short at whichever stage it's in — including canceling it before it
+  // ever appears (NG-2).
+  let nudgeState: "pending" | "shown" | "gone" = "pending";
+  let nudgeTimer = setTimeout(() => {
+    nudgeState = "shown";
+    menu.nudgeVisible = true;
+    nudgeTimer = setTimeout(() => {
+      nudgeState = "gone";
+      menu.nudgeVisible = false;
+    }, 10_000);
+  }, 10_000);
+  function cancelNudge() {
+    if (nudgeState === "gone") return;
+    nudgeState = "gone";
     clearTimeout(nudgeTimer);
+    menu.nudgeVisible = false;
   }
-  menu.onNudgeDismiss = dismissNudge;
+  menu.onNudgeDismiss = cancelNudge;
   document.addEventListener(
     "click",
     (e) => {
-      if (menu.nudgeVisible && !container.contains(e.target as Node)) {
-        dismissNudge();
+      if (nudgeState !== "gone" && !container.contains(e.target as Node)) {
+        cancelNudge();
       }
     },
     true,
@@ -420,6 +484,27 @@ map.on("load", async () => {
     return bikeStatus;
   };
 
+  // Map-side dock scoreboards (bike-scoreboard.ts): push the same three
+  // available counts the modal shows, aligned by index with the dock positions.
+  // Runs on entering Bike View and on each poll tick; freshBikeStatus's own
+  // cache keeps that to one /api/bikes fetch per cadence.
+  const pushBikeCounts = async () => {
+    if (bikeInfos.length === 0) return;
+    try {
+      const status = await freshBikeStatus();
+      networkLayer.setBikeCounts(
+        bikeInfos.map((info) => {
+          const s = status.get(info.stationId);
+          return s
+            ? { classicBikes: s.classicBikes, ebikes: s.ebikes, docks: s.docks }
+            : null;
+        }),
+      );
+    } catch (err) {
+      console.warn("bike counts push failed", err);
+    }
+  };
+
   // One row per field of the /api/bikes entry — a raw dump of the live counts,
   // to be shaped into a rider-facing layout later.
   const bikeRows = (
@@ -454,7 +539,17 @@ map.on("load", async () => {
     }
     // A tap elsewhere may have closed or retargeted the panel mid-fetch.
     if (openBikeIndex !== index) return;
-    bikePanel.target = { title: info.name, rows: bikeRows(info, status) };
+    bikePanel.target = {
+      title: info.name,
+      rows: bikeRows(info, status),
+      resources: status
+        ? {
+            classicBikes: status.classicBikes,
+            ebikes: status.ebikes,
+            docks: status.docks,
+          }
+        : null,
+    };
   };
   const closeBikePanel = () => {
     openBikeIndex = null;
@@ -466,7 +561,7 @@ map.on("load", async () => {
 
   map.on("click", (e) => {
     const r = networkLayer.pick(e.point);
-    if (r?.kind === "train" || r?.kind === "station") dismissNudge();
+    if (r?.kind === "train" || r?.kind === "station") cancelNudge();
     if (r?.kind === "bikeStation") {
       void openBikeStation(r.bikeStationIndex);
       return;
@@ -492,12 +587,20 @@ map.on("load", async () => {
     if (viewMode === "bike") {
       openPick = null;
       syncInspector();
-      void loadBikeStations();
+      void loadBikeStations().then(pushBikeCounts);
     } else {
       // Symmetric with BV-3: a dock modal must not linger over Subway View.
       closeBikePanel();
     }
+    saveDevState(viewMode);
   };
+  if (import.meta.env.DEV) {
+    // moveend misses pure pitch/rotate gestures, which end with their own events.
+    map.on("moveend", () => saveDevState(viewMode));
+    map.on("pitchend", () => saveDevState(viewMode));
+    map.on("rotateend", () => saveDevState(viewMode));
+    if (devState?.view === "bike") menu.onViewToggle();
+  }
 
   // Ease the camera to a point placed 33% down the screen, not dead center — the
   // panel covers the lower screen. `offset` is the target's pixel gap from the
@@ -531,6 +634,7 @@ map.on("load", async () => {
   const POLL_MS = 30_000;
 
   const poll = async () => {
+    if (viewMode === "bike") void pushBikeCounts();
     try {
       const res = await fetch("/api/trips");
       if (!res.ok) {

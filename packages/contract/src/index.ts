@@ -220,6 +220,16 @@ export interface DebugGraph {
   layers: DebugLayer[];
 }
 
+// --- Street grid (Bike View backdrop) ------------------------------------
+// The baked NYC street network (build-streets.ts, from an OpenStreetMap
+// extract): polylines grouped into tiers by road class, so the renderer can
+// hide the small-street tiers when zoomed out. Tier order is fixed, largest
+// roads first: 0 = motorway/trunk, 1 = primary/secondary, 2 = local streets.
+
+export interface StreetGrid {
+  tiers: LngLat[][][];
+}
+
 // --- Linear-reference index (motion) ------------------------------------
 // The web app lerps a Position Estimate along a Track by distance: given a
 // train between two stops, find their `dist`, interpolate, then walk `points`

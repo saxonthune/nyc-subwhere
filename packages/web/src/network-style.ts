@@ -110,11 +110,127 @@ export const NETWORK_STYLE = {
   // rather than narrowing it.
   bikeView: {
     lineRadius: 3,
-    station: { radius: 12, height: 8 },
-    train: { radius: 9, height: 4 },
+    // The receded subway's colors (thin network, station squares, trains) are
+    // all scaled by this before drawing, sinking them mostly under the bloom
+    // threshold so the network glows only faintly next to the docks.
+    networkDim: 0.55,
+    // Square markers, not discs: side sits slightly under the old disc
+    // diameter (24 and 18) so the swap doesn't grow the footprint. The train
+    // square orients along travel via the pose loop's bearing rotation.
+    // `dim` scales the square's color on top of networkDim: at bare networkDim
+    // the near-white still cleared the bloom threshold and glowed harshly.
+    station: { side: 20, height: 8, dim: 0.5 },
+    // Manhattan avenue bearing (degrees east of north). Station squares rotate
+    // so their corners point along the grid — one shared orientation citywide,
+    // so off-grid boroughs wear it too.
+    gridBearingDeg: 29,
+    train: { side: 16, height: 4 },
     // Citi Bike docks: plain white discs, a step bigger than the receded subway
-    // Stations so they read as the view's subject.
-    bikeStation: { radius: 16, height: 8, color: "#ffffff" },
+    // stations so they read as the view's subject. Low profile (half the old
+    // height), and they share the trains' cel outline pass (network-layer.ts).
+    // `marker` picks the representation: "disc" is the bare white puck;
+    // "scoreboard" replaces it with a flat per-dock count board
+    // (bike-scoreboard.ts) that yaws with the camera; "gauge" keeps the disc
+    // as a white base and raises a radial availability gauge out of its top
+    // face (bike-disc-gauge.ts), world-aligned to the Manhattan grid. The disc
+    // mesh stays in every mode as the pick proxy.
+    bikeStation: {
+      radius: 20,
+      height: 4,
+      color: "#ffffff",
+      marker: "gauge" as "disc" | "scoreboard" | "gauge",
+      // Slab meters; colors match the dock modal's resource palette, plus the
+      // warning red a zero count renders in.
+      scoreboard: {
+        width: 64,
+        depth: 28,
+        thickness: 4,
+        background: "#0d1117",
+        side: "#161c24",
+        colors: {
+          classic: "#22d3ee",
+          ebikes: "#ff5fd2",
+          docks: "#aab4bf",
+          zero: "#ff2d2d",
+        },
+      },
+      // Disc gauge: the white disc top divides into one sector per resource,
+      // each filling outward in rings as stock crosses its thresholds — real
+      // extruded pieces bulging slightly out of the disc (bike-disc-gauge.ts),
+      // drawn in their own pass over the bloom so the disc's white glow never
+      // washes them. All layout is data so sectors, rings, thresholds, and
+      // colors retune here alone.
+      gauge: {
+        // centerDeg is the compass bearing of the sector's center before the
+        // grid rotation (0 = north/top, clockwise); spanDeg is the sector's
+        // full angular share — the white channel between sectors is carved out
+        // of it by sectorGapFrac below. ringThresholds is per sector, inner
+        // ring first: ring i lights when the count reaches [i] — append an
+        // entry to give a sector another ring. The docks grey is a shade
+        // darker than the modal's: it sits on white here, not on the dark
+        // panel.
+        slices: [
+          {
+            key: "classicBikes" as const,
+            color: "#22d3ee",
+            centerDeg: 300,
+            spanDeg: 120,
+            ringThresholds: [1, 4],
+          },
+          {
+            key: "ebikes" as const,
+            color: "#ff5fd2",
+            centerDeg: 60,
+            spanDeg: 120,
+            ringThresholds: [1, 4],
+          },
+          {
+            key: "docks" as const,
+            color: "#8a95a2",
+            centerDeg: 180,
+            spanDeg: 120,
+            ringThresholds: [1, 4],
+          },
+        ],
+        // Radial layout as fractions of the disc radius: rings partition
+        // [innerFrac, outerFrac] evenly per sector, gapFrac of white between
+        // rings. sectorGapFrac is the white channel between adjacent sectors —
+        // a constant linear width (also a fraction of the radius), so its
+        // edges stay parallel from the inner hole to the rim.
+        rings: {
+          innerFrac: 0.16,
+          outerFrac: 0.9,
+          gapFrac: 0.06,
+          sectorGapFrac: 0.07,
+        },
+        // The sector pieces' 3D form, meters: they rise `height` above the
+        // disc top with a `bevel`-wide softened edge, and sink `embed` into
+        // the disc so their underside never shows.
+        relief: { height: 1.4, bevel: 0.35, embed: 0.6 },
+        // Fake shading for the unlit sector pieces: side/bevel faces render at
+        // this fraction of the top color, which is what makes the relief read.
+        sideShade: 0.55,
+        // Depleted dock (any resource at 0, or no live data): the disc
+        // instance greys to `discDim` — a slight grey-out, not an offline
+        // mark. Sectors with stock keep their full color.
+        discDim: 0.72,
+      },
+    },
+    // Street grid (doc01.04): the baked OSM streets etched into the land plate as
+    // flat ribbons darker than the land grey, widthM meters wide (GL ignores line
+    // width, so hairline lines were the alternative). One entry per baked tier
+    // (largest roads first); minZoom is the semantic LOD — a tier hides below it,
+    // so far out only the arterial skeleton shows and the local grid fades in on
+    // approach. Bigger roads etch darker and wider. `lift` is meters above the
+    // land top, just enough to win the depth test against the plate.
+    streets: {
+      lift: 1.5,
+      tiers: [
+        { color: "#10151b", widthM: 22, minZoom: 0 },
+        { color: "#151a21", widthM: 14, minZoom: 10.5 },
+        { color: "#191f26", widthM: 8, minZoom: 12 },
+      ],
+    },
   },
 
   // 3D station geometry (doc02.03), rendered in a Three.js custom layer. Sizes are
