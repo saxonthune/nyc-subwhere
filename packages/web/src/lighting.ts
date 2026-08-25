@@ -69,6 +69,13 @@ export class LightingSystem {
         uMin: { value: new THREE.Vector2(field.minX, field.minZ) },
         uMax: { value: new THREE.Vector2(field.maxX, field.maxZ) },
         uIntensity: { value: water.shoreIntensity },
+        // One falloff width in UV units per axis, for the rim fade below.
+        uRim: {
+          value: new THREE.Vector2(
+            water.shoreFalloffM / (field.maxX - field.minX),
+            water.shoreFalloffM / (field.maxZ - field.minZ),
+          ),
+        },
       },
       vertexShader: /* glsl */ `
         varying vec2 vXZ;
@@ -84,11 +91,16 @@ export class LightingSystem {
         uniform vec2 uMin;
         uniform vec2 uMax;
         uniform float uIntensity;
+        uniform vec2 uRim;
         varying vec2 vXZ;
         void main() {
           vec2 uv = (vXZ - uMin) / (uMax - uMin);
           if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
           float m = texture2D(uShore, uv).r * uIntensity;
+          // Ramp the outermost falloff-width band of the region to zero, so the
+          // fade can never end on the region rectangle no matter the intensity.
+          vec2 edge = min(uv, 1.0 - uv) / uRim;
+          m *= clamp(min(edge.x, edge.y), 0.0, 1.0);
           if (m <= 0.002) discard;
           gl_FragColor = vec4(uColor, clamp(m, 0.0, 1.0));
         }
@@ -142,18 +154,21 @@ function makeShorelineField(
     if (p.z < minZ) minZ = p.z;
     if (p.z > maxZ) maxZ = p.z;
   }
-  // Pad the region by the falloff so the seaward tail has room to fade, and guard the
-  // empty-land case with a unit box (the shader just fades to nothing).
+  // Pad the region by 3× the falloff: CSS blur(N) is a Gaussian with σ=N, so at one
+  // falloff out the tail still holds ~15% — which shoreIntensity then amplifies into
+  // a visible blue wall at the region edge. Three sigmas leaves it truly near zero.
+  // Guard the empty-land case with a unit box (the shader just fades to nothing).
   if (!Number.isFinite(minX)) {
     minX = -1;
     minZ = -1;
     maxX = 1;
     maxZ = 1;
   }
-  minX -= falloffM;
-  minZ -= falloffM;
-  maxX += falloffM;
-  maxZ += falloffM;
+  const pad = 3 * falloffM;
+  minX -= pad;
+  minZ -= pad;
+  maxX += pad;
+  maxZ += pad;
 
   const regionW = maxX - minX;
   const regionH = maxZ - minZ;

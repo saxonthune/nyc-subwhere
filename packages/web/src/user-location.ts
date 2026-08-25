@@ -37,28 +37,42 @@ export class UserLocationTracker {
 
   // Must be called from a user gesture: iOS only grants the compass
   // permission when requestPermission() runs inside one, so it is asked
-  // before any other await could break the gesture chain.
+  // before any await could break the gesture chain.
   async enable(): Promise<void> {
     if (this.active) return;
-    if (!("geolocation" in navigator)) {
+    // Geolocation works only in a secure context (https, or localhost) —
+    // over plain http on a LAN address every platform refuses the watch, so
+    // report that as blocked up front instead of failing silently.
+    if (!("geolocation" in navigator) || !window.isSecureContext) {
       this.onDenied();
       return;
     }
     this.active = true;
-    const doe = DeviceOrientationEvent as unknown as {
-      requestPermission?: () => Promise<string>;
-    };
-    if (typeof doe.requestPermission === "function") {
-      try {
+    // Start the position watch before the compass prompt: the fix needs no
+    // gesture, and this way a hung, dismissed, or denied motion prompt can
+    // never hold up the marker. orientationEvent is still empty here, so
+    // startSensors attaches no compass listener yet.
+    this.startSensors();
+    try {
+      const doe = DeviceOrientationEvent as unknown as {
+        requestPermission?: () => Promise<string>;
+      };
+      if (typeof doe.requestPermission === "function") {
         if ((await doe.requestPermission()) === "granted")
           this.orientationEvent = "deviceorientation";
-      } catch {
-        // Compass denied or unavailable; position alone still works.
+      } else if ("ondeviceorientationabsolute" in window) {
+        this.orientationEvent = "deviceorientationabsolute";
       }
-    } else if ("ondeviceorientationabsolute" in window) {
-      this.orientationEvent = "deviceorientationabsolute";
+    } catch {
+      // Compass denied or unavailable; position alone still works.
     }
-    this.startSensors();
+    // The user may have toggled location off — or backgrounded the tab —
+    // while the prompt was up; in either case the listener must not attach.
+    if (this.active && this.orientationEvent && !document.hidden)
+      window.addEventListener(
+        this.orientationEvent,
+        this.onOrientation as EventListener,
+      );
   }
 
   disable(): void {

@@ -58,9 +58,11 @@ export class StatsPanel extends LitElement {
       z-index: 10;
       font: 14px/1.4 system-ui, sans-serif;
       color: #e8e8e8;
+      max-width: calc(100vw - 16px);
     }
     .panel {
       min-width: 220px;
+      max-width: 100%;
       background: rgba(18, 18, 20, 0.94);
       border: 1px solid rgba(255, 255, 255, 0.14);
       border-radius: 8px;
@@ -97,6 +99,10 @@ export class StatsPanel extends LitElement {
       font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
       white-space: pre;
       color: #d6d6d6;
+      /* The drop list can run long on a phone; scroll inside the panel
+         rather than growing it past the top of the viewport. */
+      max-height: 60vh;
+      overflow: auto;
     }
     /* Panel text isn't selectable (body-wide user-select: none, kept for the
        mobile long-press callout). The shot line is the one value worth copying,
@@ -115,8 +121,11 @@ export class StatsPanel extends LitElement {
     }
   `;
 
+  // `open` is controlled by main.ts's overlay owner (one overlay at a time),
+  // so the close button reports the press rather than flipping local state —
+  // same shape as the inspector's "inspector-close".
   private close() {
-    this.open = false;
+    this.dispatchEvent(new CustomEvent("stats-close"));
   }
 
   private async copyShot(text: string) {

@@ -200,22 +200,37 @@ map.on("load", async () => {
   const aboutPanel = new AboutPanel();
   document.body.append(aboutPanel);
   const menu = new Menu();
+
+  // One overlay at a time (menu popover, Advanced Stats, About): this single
+  // variable is the state machine — exclusivity falls out of the
+  // representation, since one value cannot hold two open panels. The
+  // components are controlled (their `open` set only here; presses come back
+  // as callbacks/events). Map selections (inspector, bike modal) stay outside
+  // this set on purpose. Menu toggles (trains, lighting) never touch it, so
+  // the popover stays open while flipping several in a row.
+  type Overlay = "menu" | "stats" | "about" | null;
+  let overlay: Overlay = null;
+  const setOverlay = (next: Overlay) => {
+    overlay = next === overlay ? null : next;
+    menu.open = overlay === "menu";
+    statsPanel.open = overlay === "stats";
+    aboutPanel.open = overlay === "about";
+  };
+  menu.onMenuToggle = () => setOverlay("menu");
+  statsPanel.addEventListener("stats-close", () => setOverlay(null));
+  aboutPanel.addEventListener("about-close", () => setOverlay(null));
+
   menu.options = [
     { label: "Toggle trains", onSelect: () => networkLayer.toggleTrains() },
     { label: "Toggle lighting", onSelect: () => networkLayer.toggleLighting() },
     {
       label: "Advanced stats",
       onSelect: () => {
-        statsPanel.open = !statsPanel.open;
+        setOverlay("stats");
         syncCamera();
       },
     },
-    {
-      label: "About",
-      onSelect: () => {
-        aboutPanel.open = !aboutPanel.open;
-      },
-    },
+    { label: "About", onSelect: () => setOverlay("about") },
   ];
   // User location (user-location.ts): the menu button requests the browser
   // permissions and feeds the blue marker in the scene; its label doubles as
@@ -516,8 +531,13 @@ map.on("load", async () => {
       const res = await fetch("/api/bikes");
       if (res.ok) {
         const snap = (await res.json()) as BikeSnapshot;
-        bikeStatus = new Map(snap.stations.map((s) => [s.stationId, s]));
-        bikeStatusAt = Date.now();
+        // A warming frame (kick-on-request worker, no stations yet) is not
+        // data: keep what we had and leave the cache stale so the next call
+        // refetches instead of pinning the empty result for a full cadence.
+        if (snap.stations.length > 0) {
+          bikeStatus = new Map(snap.stations.map((s) => [s.stationId, s]));
+          bikeStatusAt = Date.now();
+        }
       }
     }
     return bikeStatus;
@@ -626,7 +646,10 @@ map.on("load", async () => {
     if (viewMode === "bike") {
       openPick = null;
       syncInspector();
-      void loadBikeStations().then(pushBikeCounts);
+      // Fresh retry budget on entry: the bike poller may be warming even when
+      // the trips side is live (it is kicked only by bike requests).
+      warmRetries = 0;
+      void loadBikeStations().then(pushBikeCounts).then(maybeRetryWarm);
     } else {
       // Symmetric with BV-3: a dock modal must not linger over Subway View.
       closeBikePanel();
@@ -672,8 +695,35 @@ map.on("load", async () => {
 
   const POLL_MS = 30_000;
 
+  // Warming retry: the worker populates its KV frames via kick-on-request
+  // pollers, so the first response after a cold start is an empty (or stale)
+  // frame while the poller wakes — the real data lands seconds later. Re-poll
+  // on a short fuse until a live frame arrives instead of sitting out the
+  // full cadence; capped so a genuine outage doesn't turn into a hammer.
+  const WARM_RETRY_MS = 3000;
+  const WARM_RETRY_MAX = 5;
+  const STALE_MS = 60_000;
+  let warmRetries = 0;
+  const maybeRetryWarm = () => {
+    const warming =
+      !snapshot ||
+      snapshot.trips.length === 0 ||
+      Date.now() - snapshot.asOf > STALE_MS ||
+      (viewMode === "bike" &&
+        (bikeInfos.length === 0 || bikeStatus.size === 0));
+    if (warming && warmRetries < WARM_RETRY_MAX) {
+      warmRetries++;
+      setTimeout(() => void poll(), WARM_RETRY_MS);
+    } else if (!warming) {
+      warmRetries = 0;
+    }
+  };
+
   const poll = async () => {
-    if (viewMode === "bike") void pushBikeCounts();
+    // loadBikeStations self-heals a warming station index: it no-ops once
+    // loaded, so re-invoking it each tick only matters while it's still empty.
+    const bikeWork =
+      viewMode === "bike" ? loadBikeStations().then(pushBikeCounts) : null;
     try {
       const res = await fetch("/api/trips");
       if (!res.ok) {
@@ -704,6 +754,8 @@ map.on("load", async () => {
     } finally {
       menu.nextUpdateAt = Date.now() + POLL_MS;
     }
+    if (bikeWork) await bikeWork;
+    maybeRetryWarm();
   };
 
   const frame = () => {

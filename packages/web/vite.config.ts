@@ -45,6 +45,10 @@ function metricsSink(): Plugin {
 export default defineConfig({
   plugins: [metricsSink()],
   server: {
+    // Listen on the LAN too, so a phone on the same network can load the dev
+    // server. The /api proxy runs on this machine, so remote clients still
+    // reach the local Worker through it.
+    host: true,
     proxy: {
       "/api": "http://localhost:8788",
     },

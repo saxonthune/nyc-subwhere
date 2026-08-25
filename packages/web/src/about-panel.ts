@@ -77,9 +77,11 @@ export class AboutPanel extends LitElement {
           <span class="title">About</span>
           <button
             class="close"
-            @click=${() => {
-              this.open = false;
-            }}
+            @click=${
+              // `open` is controlled by main.ts's overlay owner (one overlay
+              // at a time), so report the press rather than flip local state.
+              () => this.dispatchEvent(new CustomEvent("about-close"))
+            }
             aria-label="Close"
           >
             ×

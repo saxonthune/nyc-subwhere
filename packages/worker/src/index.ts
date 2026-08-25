@@ -16,8 +16,9 @@ const POLLER_NAME = "singleton";
 
 const BIKE_SNAPSHOT_KEY = "bikes:snapshot";
 const BIKE_STATIONS_KEY = "bikes:stations";
-// Station identity (doc02.09) changes seasonally, unlike the 30s live counts.
-const STATIONS_REFRESH_MS = 300_000;
+// Station identity (doc02.09) changes seasonally, unlike the 30s live counts,
+// so a daily refresh is plenty.
+const STATIONS_REFRESH_MS = 86_400_000;
 
 export interface Env {
   ASSETS: Fetcher;
@@ -89,7 +90,7 @@ export default {
 
       const cached = await env.SNAPSHOT.get(BIKE_STATIONS_KEY);
       if (cached == null) {
-        // Hourly-refresh frame: served no-store while empty so a client that
+        // Daily-refresh frame: served no-store while empty so a client that
         // hits the warming case retries soon rather than caching a mile-wide gap.
         const warming: BikeStationsIndex = { asOf: Date.now(), stations: [] };
         return Response.json(warming, {

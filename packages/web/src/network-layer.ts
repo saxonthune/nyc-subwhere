@@ -37,6 +37,13 @@ const TRAIN_LAYER = 1;
 // so the dock discs' white glow never washes over the sector colors.
 const GAUGE_LAYER = 2;
 
+// three.js render layer for the backdrop (water, land, street ribbons). Drawn
+// in the base scene render but skipped in the bloom-source re-render: these
+// surfaces sit below the bloom's luminance threshold, so re-rendering them
+// there paid the full vertex and fill cost of the citywide geometry twice per
+// frame for no visible glow.
+const BACKDROP_LAYER = 3;
+
 // Debug centerline pipes (doc02.07): skinny tubes drawn in place of the tracks to inspect a
 // pipeline stage's raw geometry. Radius far under the 26 m half-ribbon so they read as thin.
 const DEBUG_PIPE_RADIUS = 3;
@@ -172,6 +179,10 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
 
     this.lighting.addLights(this.scene);
 
+    // The base render must include the backdrop layer alongside the default;
+    // restricted passes reset through restoreCameraLayers() to keep it on.
+    this.camera.layers.enable(BACKDROP_LAYER);
+
     // Basemap first (doc01.03): water plane at the bottom, grey borough land above
     // it, both beneath the network. They carry no userData.kind, so pick() never
     // sees them and clicks pass through to the tracks and stations.
@@ -305,18 +316,20 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.glow.render(
       () => this.renderer.render(this.scene, this.camera),
       () => {
-        // Bloom source. "scene": render everything, so the luminance threshold in the
-        // bloom pass tiers the glow by role (trains brightest, then track/stations,
-        // then the dim land; the dark water falls away). "trains": restrict the camera
-        // to the train layer so only the train boxes feed the bloom (the older
-        // trains-only glow, regardless of Route-color luminance).
+        // Bloom source. "scene": render everything but the backdrop layer, so the
+        // luminance threshold in the bloom pass tiers the glow by role (trains
+        // brightest, then track/stations); water, land, and streets sit below the
+        // threshold, so skipping their citywide geometry here changes nothing
+        // visibly and halves the backdrop's per-frame cost. "trains": restrict
+        // the camera to the train layer so only the train boxes feed the bloom
+        // (the older trains-only glow, regardless of Route-color luminance).
         if (NETWORK_STYLE.lighting.bloom.source === "trains") {
           this.camera.layers.set(TRAIN_LAYER);
-          this.renderer.render(this.scene, this.camera);
-          this.camera.layers.set(0);
         } else {
-          this.renderer.render(this.scene, this.camera);
+          this.camera.layers.disable(BACKDROP_LAYER);
         }
+        this.renderer.render(this.scene, this.camera);
+        this.restoreCameraLayers();
       },
     );
     // Gauge sectors over the composited bloom: their layer is excluded from
@@ -326,7 +339,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     if (this.bikeGauges) {
       this.camera.layers.set(GAUGE_LAYER);
       this.renderer.render(this.scene, this.camera);
-      this.camera.layers.set(0);
+      this.restoreCameraLayers();
     }
     // Cel outline last, over whatever the glow composited. Its mask render is
     // always the train layer — trains, plus Bike View's docks (unlike the
@@ -334,7 +347,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.outline.render(this.renderer, () => {
       this.camera.layers.set(TRAIN_LAYER);
       this.renderer.render(this.scene, this.camera);
-      this.camera.layers.set(0);
+      this.restoreCameraLayers();
     });
     // No unconditional triggerRepaint here — that would repaint the full scene +
     // bloom at max FPS forever, even on a static view. The animation loop is driven
@@ -365,6 +378,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     mesh.position.y = water.level;
     mesh.frustumCulled = false;
     mesh.renderOrder = -1;
+    mesh.layers.set(BACKDROP_LAYER);
     return mesh;
   }
 
@@ -404,6 +418,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     const mesh = new THREE.Mesh(merged, this.lighting.landMaterial());
     mesh.position.y = -land.height;
     mesh.frustumCulled = false;
+    mesh.layers.set(BACKDROP_LAYER);
     return mesh;
   }
 
@@ -645,6 +660,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.frustumCulled = false;
       mesh.visible = false;
+      mesh.layers.set(BACKDROP_LAYER);
       this.streetTiers[tierIndex] = mesh;
       this.scene.add(mesh);
     });
@@ -1012,6 +1028,14 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.glowColors = new Float32Array(capacity * 3);
     this.glow.rebuild(capacity);
     this.scene.add(core);
+  }
+
+  // The base layer set the full-scene renders use: the default layer plus the
+  // backdrop. Every restricted pass ends by restoring this rather than a bare
+  // layers.set(0), which would silently drop the backdrop from later frames.
+  private restoreCameraLayers(): void {
+    this.camera.layers.set(0);
+    this.camera.layers.enable(BACKDROP_LAYER);
   }
 
   private syncZoom = () => {

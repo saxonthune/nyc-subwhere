@@ -9,11 +9,17 @@ export interface MenuOption {
 // Bottom-left "Menu" button whose panel rises above it (doc01.03). The host is
 // bottom-anchored, so the panel — laid out before the button in flow — grows the
 // stack upward when shown. Options are plain {label, onSelect}; the menu stays
-// open after a selection so toggles can be flipped in a row.
+// open after selecting a toggle so several can be flipped in a row (options
+// that open a panel close it themselves, via main.ts's overlay owner).
+//
+// `open` is controlled: main.ts owns which overlay (menu popover, Advanced
+// Stats, About) is showing, so the button reports the press through
+// onMenuToggle rather than flipping local state.
 export class Menu extends LitElement {
   static properties = {
     options: { attribute: false },
     open: { attribute: false, type: Boolean },
+    onMenuToggle: { attribute: false },
     nextUpdateAt: { attribute: false, type: Number },
     viewMode: { attribute: false },
     onViewToggle: { attribute: false },
@@ -24,6 +30,7 @@ export class Menu extends LitElement {
   };
   declare options: MenuOption[];
   declare open: boolean;
+  declare onMenuToggle?: () => void;
   /** Epoch ms of the next data poll; 0 until the first poll is scheduled. */
   declare nextUpdateAt: number;
   declare viewMode: "subway" | "bike";
@@ -155,10 +162,6 @@ export class Menu extends LitElement {
     }
   `;
 
-  private toggle() {
-    this.open = !this.open;
-  }
-
   // Full and short forms of the countdown; the short one ("12s") is shown on narrow
   // screens where "next update: 12s" would crowd the bar (see the media query).
   private countdown(): { full: string; short: string } {
@@ -188,7 +191,7 @@ export class Menu extends LitElement {
           : nothing
       }
       <div class="bar">
-        <button class="toggle" @click=${this.toggle}>
+        <button class="toggle" @click=${() => this.onMenuToggle?.()}>
           <span class="full">Menu</span><span class="short">☰</span>
         </button>
         <button class="toggle" @click=${() => this.onViewToggle?.()}>

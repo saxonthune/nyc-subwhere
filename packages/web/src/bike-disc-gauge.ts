@@ -128,13 +128,17 @@ function sectorGeometry(
   shape.absarc(0, 0, r1, alpha(beta0 + in1), alpha(beta1 - in1), true);
   shape.absarc(0, 0, r0, alpha(beta1 - in0), alpha(beta0 + in0), false);
   shape.closePath();
+  // Tessellation kept coarse on purpose: a piece spans at most ~120° of a 40 m
+  // disc, so 6 arc segments and a single bevel step are indistinguishable from
+  // finer settings at any real zoom — and with ~10k pieces citywide, each extra
+  // segment multiplies into millions of triangles per frame on mobile.
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth: relief.height,
     bevelEnabled: true,
     bevelThickness: relief.bevel,
     bevelSize: relief.bevel,
-    bevelSegments: 2,
-    curveSegments: 24,
+    bevelSegments: 1,
+    curveSegments: 6,
   });
   geo.rotateX(-Math.PI / 2);
   return geo;
