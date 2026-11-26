@@ -6,6 +6,7 @@
       "**/.vite/**",
       "**/.wrangler/**",
       "packages/web/src/assets/**",
+      "packages/web/public/bus-data/**",
       "packages/geometry/merge-report.json",
       "packages/geometry/debug/**",
       "packages/worker/src/gtfs-proto.js",

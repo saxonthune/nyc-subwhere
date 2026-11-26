@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "networkVersion": "536bcebd91977b99d5bc",
+  "asOf": 1795714198395,
+  "departures": [
+    {
+      "feed": "m",
+      "routeId": "M42",
+      "routeName": "M42",
+      "tripId": "MQ_D6-Sunday-073000_M42_308",
+      "tripKey": "20261126/m/MQ_D6-Sunday-073000_M42_308",
+      "serviceDate": "20261126",
+      "headsign": "EAST SIDE U N-1 AV CROSSTOWN",
+      "boarding": {
+        "stopId": "404160",
+        "sequence": 11,
+        "time": 1795713953000,
+        "basis": "scheduled"
+      },
+      "downstream": [
+        {
+          "stopId": "403459",
+          "sequence": 12,
+          "canAlight": true,
+          "time": 1795714020000,
+          "basis": "scheduled"
+        },
+        {
+          "stopId": "403245",
+          "sequence": 13,
+          "canAlight": true,
+          "time": 1795714059000,
+          "basis": "scheduled"
+        },
+        {
+          "stopId": "405593",
+          "sequence": 14,
+          "canAlight": true,
+          "time": 1795714082000,
+          "basis": "scheduled"
+        },
+        {
+          "stopId": "403247",
+          "sequence": 15,
+          "canAlight": true,
+          "time": 1795714142000,
+          "basis": "scheduled"
+        },
+        {
+          "stopId": "403248",
+          "sequence": 16,
+          "canAlight": true,
+          "time": 1795714194000,
+          "basis": "scheduled"
+        },
+        {
+          "stopId": "903046",
+          "sequence": 17,
+          "canAlight": true,
+          "time": 1795714260000,
+          "basis": "scheduled"
+        }
+      ]
+    }
+  ],
+  "nextCursor": null
+}

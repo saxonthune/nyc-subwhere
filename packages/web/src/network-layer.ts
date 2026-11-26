@@ -65,6 +65,8 @@ type Placement = { x: number; z: number };
 // A geometric hit, resolved to the index/id the caller keyed its metadata by
 // (doc01.03). This layer stays free of Trip/Station semantics: main.ts turns a
 // PickResult into an inspector target from its own baked props + live snapshot.
+export type ViewMode = "subway" | "bike" | "bus";
+
 export type PickResult =
   | { kind: "segment"; segmentIndex: number }
   | { kind: "station"; stationIndex: number }
@@ -126,7 +128,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   private activeDebug = -1;
   // View mode (doc01.04): Bike View's thin network and small pucks are built
   // lazily on first entry and visibility-flipped against the subway build.
-  private viewMode: "subway" | "bike" = "subway";
+  private viewMode: ViewMode = "subway";
   private thinNetwork?: THREE.Mesh;
   private smallPucks?: THREE.InstancedMesh;
   private bikeStations?: THREE.InstancedMesh;
@@ -216,6 +218,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
   // frame — no view matrix to undo. Nearest hit wins; invisible meshes (e.g. the
   // trains when toggled off) are skipped by three.
   pick(point: { x: number; y: number }): PickResult | null {
+    if (this.viewMode === "bus") return null;
     const canvas = this.map.getCanvas();
     const ndcX = (point.x / canvas.clientWidth) * 2 - 1;
     const ndcY = -(point.y / canvas.clientHeight) * 2 + 1;
@@ -484,7 +487,8 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     const centerY = trainCenterY(this.trainHeight);
     // Discs ride the centerline: the parallel-track visual collapses at Bike
     // View's thin width, so the left-of-travel offset would read as error.
-    const off = this.viewMode === "bike" ? 0 : NETWORK_STYLE.track.trainOffsetM;
+    const off =
+      this.viewMode !== "subway" ? 0 : NETWORK_STYLE.track.trainOffsetM;
     const rot = new THREE.Matrix4();
     const pos = new THREE.Matrix4();
     const m = new THREE.Matrix4();
@@ -496,7 +500,7 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     // Bike View turns the whole subway side down: train (and glow) colors are
     // scaled like the thin network and station squares (networkDim).
     const dim =
-      this.viewMode === "bike" ? NETWORK_STYLE.bikeView.networkDim : 1;
+      this.viewMode !== "subway" ? NETWORK_STYLE.bikeView.networkDim : 1;
     poses.forEach((p, i) => {
       const c = this.toLocal(p.lngLat);
       // Shift onto the same side as the track ribbon (offsetLeft in the flipped
@@ -559,33 +563,33 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     this.map.triggerRepaint();
   }
 
-  // Swap the Board between Subway View and Bike View (doc01.04): one scene, two
-  // representation sets flipped by visibility, so switching re-fetches nothing
-  // (VW-2). Trains rebuild so their geometry matches the view. Not persisted: a
+  // Switch the Board's view (doc01.04). Bus and Bike share the compact subway
+  // representation. Streets provide context for surface stops and docks
+  // (VW-2). Trains rebuild to match the view. In production a
   // reload starts in Subway View (VW-1).
-  setViewMode(mode: "subway" | "bike"): void {
+  setViewMode(mode: ViewMode): void {
     if (mode === this.viewMode) return;
     this.viewMode = mode;
-    const bike = mode === "bike";
-    if (bike && !this.thinNetwork) {
+    const compact = mode !== "subway";
+    if (compact && !this.thinNetwork) {
       const mesh = this.buildThinNetwork();
       if (mesh) {
         this.thinNetwork = mesh;
         this.scene.add(mesh);
       }
     }
-    if (bike && !this.smallPucks) {
+    if (compact && !this.smallPucks) {
       // No userData.kind: small pucks are never pick targets (BV-2).
       this.smallPucks = this.buildSquareStations(
         NETWORK_STYLE.bikeView.station,
       );
       this.scene.add(this.smallPucks);
     }
-    if (bike && this.streetTiers.length === 0) this.buildStreetTiers();
-    for (const obj of this.trackBuild?.objects ?? []) obj.visible = !bike;
-    if (this.thinNetwork) this.thinNetwork.visible = bike;
-    if (this.pucks) this.pucks.visible = !bike;
-    if (this.smallPucks) this.smallPucks.visible = bike;
+    if (compact && this.streetTiers.length === 0) this.buildStreetTiers();
+    for (const obj of this.trackBuild?.objects ?? []) obj.visible = !compact;
+    if (this.thinNetwork) this.thinNetwork.visible = compact;
+    if (this.pucks) this.pucks.visible = !compact;
+    if (this.smallPucks) this.smallPucks.visible = compact;
     this.syncBikeMarkers();
     this.syncStreetVisibility();
     if (this.trains) {
@@ -715,12 +719,12 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     return geo;
   }
 
-  // Semantic LOD for the street grid: a tier shows only in Bike View, outside
+  // Semantic LOD for the street grid: a tier shows in Bike and Bus views, outside
   // the debug cycle, and at/above its minZoom — far out the local grid drops
   // away and only the arterial skeleton stays etched.
   private syncStreetVisibility(): void {
     if (this.streetTiers.length === 0) return;
-    const on = this.viewMode === "bike" && this.activeDebug < 0;
+    const on = this.viewMode !== "subway" && this.activeDebug < 0;
     const zoom = this.map.getZoom();
     const { tiers } = NETWORK_STYLE.bikeView.streets;
     this.streetTiers.forEach((mesh, i) => {
@@ -986,15 +990,15 @@ export class NetworkLayer implements maplibregl.CustomLayerInterface {
     // (across); Bike View is a small flat square (doc01.04 BV-1), oriented along
     // travel by the pose loop's bearing rotation. setColorAt tints each
     // instance, so one material carries every Route color.
-    const bike = this.viewMode === "bike";
-    const coreGeo = bike
+    const compact = this.viewMode !== "subway";
+    const coreGeo = compact
       ? new THREE.BoxGeometry(
           bikeView.train.side,
           bikeView.train.height,
           bikeView.train.side,
         )
       : new THREE.BoxGeometry(train.length, train.height, train.width);
-    this.trainHeight = bike ? bikeView.train.height : train.height;
+    this.trainHeight = compact ? bikeView.train.height : train.height;
     const trainMat = new THREE.MeshBasicMaterial();
     trainMat.polygonOffset = true;
     [trainMat.polygonOffsetFactor, trainMat.polygonOffsetUnits] =

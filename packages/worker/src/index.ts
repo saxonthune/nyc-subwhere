@@ -4,6 +4,8 @@ import type {
   RenderSnapshot,
 } from "@nyc-subwhere/contract";
 import { pollBikeSnapshot, pollBikeStations } from "./bikes.js";
+import { busApi } from "./bus-api";
+import { busAsset } from "./bus-assets";
 import { pollSnapshot } from "./poll.js";
 import type { TripMem, TripMemory } from "./reshape.js";
 
@@ -19,7 +21,12 @@ const BIKE_STATIONS_KEY = "bikes:stations";
 // Station identity (doc02.09) changes seasonally, unlike the 30s live counts.
 const STATIONS_REFRESH_MS = 300_000;
 
+export { BusPoller } from "./bus-live";
+
 export interface Env {
+  BUS_SCHEDULE_ARCHIVE?: string;
+  BUS_POLLER: DurableObjectNamespace;
+  BUSTIME_API_KEY?: string;
   ASSETS: Fetcher;
   SNAPSHOT: KVNamespace;
   FEED_POLLER: DurableObjectNamespace;
@@ -29,6 +36,8 @@ export interface Env {
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/bus-data/")) return busAsset(env, url);
+    if (url.pathname.startsWith("/api/bus/")) return busApi(request, env, ctx);
 
     if (url.pathname === "/api/health") {
       return Response.json({ ok: true });

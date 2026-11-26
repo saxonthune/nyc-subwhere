@@ -1,3 +1,4 @@
+export type * from "./bus";
 // --- Live render frame (doc02.04) ---------------------------------------
 // The frame the worker ships each poll and the web app renders on top of the
 // baked geometry below. See doc01.01 (glossary) for terms, doc02.04 (backend)
@@ -34,6 +35,8 @@ export interface TripState {
    *  Trip Replacement Period (doc02.02): more stops = more resilience to a
    *  late poll before the train must blink. */
   upcoming: StopArrival[];
+  /** Full remaining calls when a stall limits the animation to its next stop. */
+  predictedStops?: StopArrival[];
 
   /** The worker's verdict on motion, when it has one. Absent until the worker
    *  diffs snapshots to detect a stall (doc02.04); the web app renders

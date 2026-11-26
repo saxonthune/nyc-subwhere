@@ -1,0 +1,14 @@
+{
+  "name": "@nyc-subwhere/bus",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "python3 -B -m unittest discover -s test -p 'test_*.py' && tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build-network": "python3 build_network.py"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

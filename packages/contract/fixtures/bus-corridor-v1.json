@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "networkVersion": "corridor-v1",
+  "serviceDate": "20261123",
+  "curbArrival": 1795441920000,
+  "departure": 1795442040000,
+  "downstreamArrival": 1795442340000,
+  "stopId": "curb",
+  "table": {
+    "feed": "m",
+    "routeId": "demo",
+    "routeName": "Corridor bus",
+    "patterns": [[["curb", 1, 0, 1], ["exit", 2, 1, 0]]],
+    "offsets": [[0, 0, 300, 300]],
+    "trips": [
+      ["early", "m:weekday", "Exit", 0, 0, 31860],
+      ["catch", "m:weekday", "Exit", 0, 0, 32040],
+      ["later", "m:weekday", "Exit", 0, 0, 32640]
+    ]
+  }
+}

@@ -1,5 +1,12 @@
 import { LitElement, css, html, nothing } from "lit";
-import { bikingIcon, locateIcon, subwayIcon } from "./icons";
+import { bikingIcon, busIcon, locateIcon, subwayIcon } from "./icons";
+import type { ViewMode } from "./network-layer";
+
+const views = [
+  { mode: "subway", label: "Subway view", icon: subwayIcon },
+  { mode: "bike", label: "Bike view", icon: bikingIcon },
+  { mode: "bus", label: "Bus view", icon: busIcon },
+] as const;
 
 export interface MenuOption {
   label: string;
@@ -16,7 +23,7 @@ export class Menu extends LitElement {
     open: { attribute: false, type: Boolean },
     nextUpdateAt: { attribute: false, type: Number },
     viewMode: { attribute: false },
-    onViewToggle: { attribute: false },
+    onViewSelect: { attribute: false },
     nudgeVisible: { attribute: false, type: Boolean },
     onNudgeDismiss: { attribute: false },
     locateVisible: { attribute: false, type: Boolean },
@@ -26,8 +33,8 @@ export class Menu extends LitElement {
   declare open: boolean;
   /** Epoch ms of the next data poll; 0 until the first poll is scheduled. */
   declare nextUpdateAt: number;
-  declare viewMode: "subway" | "bike";
-  declare onViewToggle?: () => void;
+  declare viewMode: ViewMode;
+  declare onViewSelect?: (view: ViewMode) => void;
   /** Interaction nudge shown above the bar at load (doc01.04 NG-1). */
   declare nudgeVisible: boolean;
   declare onNudgeDismiss?: () => void;
@@ -75,8 +82,8 @@ export class Menu extends LitElement {
       appearance: none;
       cursor: pointer;
       color: #e8e8e8;
-      background: rgba(18, 18, 20, 0.92);
-      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: #293746;
+      border: none;
       border-radius: 6px;
       padding: 8px 12px;
     }
@@ -92,8 +99,8 @@ export class Menu extends LitElement {
       align-items: stretch;
       gap: 4px;
       padding: 6px;
-      background: rgba(18, 18, 20, 0.92);
-      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: #293746;
+      border: none;
       border-radius: 8px;
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     }
@@ -111,6 +118,30 @@ export class Menu extends LitElement {
       align-items: center;
       gap: 8px;
     }
+    .views {
+      display: flex;
+      gap: 2px;
+      padding: 3px;
+      border-radius: 8px;
+      background: #2a394a;
+    }
+    .view {
+      background: transparent;
+      border: none;
+      color: #eaf1fa;
+    }
+    .view:hover {
+      background: #425266;
+    }
+    .view[aria-pressed="true"] {
+      background: #cfdfef;
+      color: #162839;
+      font-weight: 650;
+    }
+    button:focus-visible {
+      outline: 2px solid #88d6ff;
+      outline-offset: -3px;
+    }
     .icon {
       width: 16px;
       height: 16px;
@@ -122,16 +153,16 @@ export class Menu extends LitElement {
     .nudge {
       cursor: pointer;
       color: #eaf3ff;
-      background: rgba(46, 92, 150, 0.55);
-      border: 1px solid rgba(140, 190, 255, 0.4);
+      background: #345678;
+      border: none;
       border-radius: 6px;
       padding: 8px 12px;
       max-width: 260px;
     }
     .countdown {
       color: #b8b8b8;
-      background: rgba(18, 18, 20, 0.92);
-      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: #293746;
+      border: none;
       border-radius: 6px;
       padding: 8px 10px;
       font-variant-numeric: tabular-nums;
@@ -142,6 +173,11 @@ export class Menu extends LitElement {
       display: none;
     }
     @media (max-width: 480px) {
+      .view {
+        min-width: 40px;
+        min-height: 42px;
+        padding: 9px;
+      }
       .full {
         display: none;
       }
@@ -188,18 +224,12 @@ export class Menu extends LitElement {
           : nothing
       }
       <div class="bar">
-        <button class="toggle" @click=${this.toggle}>
+        <button class="toggle" aria-label="Menu" aria-expanded=${this.open} @click=${this.toggle}>
           <span class="full">Menu</span><span class="short">☰</span>
         </button>
-        <button class="toggle" @click=${() => this.onViewToggle?.()}>
-          <span class="full">${
-            // The label names the view a press switches TO (doc01.04 TG-3).
-            this.viewMode === "subway" ? "Bike view" : "Subway view"
-          }</span
-          ><span class="short"
-            >${this.viewMode === "subway" ? bikingIcon : subwayIcon}</span
-          >
-        </button>
+        <div class="views" role="group" aria-label="Map view">
+          ${views.map(({ mode, label, icon }) => html`<button class="view" aria-label=${label} title=${label} aria-pressed=${this.viewMode === mode} @click=${() => this.onViewSelect?.(mode)}><span class="full">${label}</span><span class="short">${icon}</span></button>`)}
+        </div>
         ${
           this.locateVisible
             ? html`<button

@@ -153,3 +153,7 @@ dist/
 # Intermediate pipeline artifacts for inspection — regenerated every build (doc02.05)
 /packages/geometry/debug/
 
+
+/packages/web/public/bus-data/
+/packages/web/public/.bus-publish.lock
+.dev.vars*

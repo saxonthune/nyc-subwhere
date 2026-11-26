@@ -24,6 +24,7 @@ import streetsUrl from "./assets/streets.json?url";
 import trackGraphUrl from "./assets/track-graph.json?url";
 import trackIndexUrl from "./assets/track-index.json?url";
 import { BikePanel } from "./bike-panel";
+import { BusOverlay } from "./buses";
 import { HeaderPanel } from "./header-panel";
 import {
   InspectorPanel,
@@ -36,9 +37,11 @@ import {
   type BoroughPolygon,
   NetworkLayer,
   type PickResult,
+  type ViewMode,
 } from "./network-layer";
 import { predictionErrors } from "./prediction-error";
 import { StatsPanel } from "./stats-panel";
+import { TrainLabels } from "./train-labels";
 import { TripEstimator, colorFor, indexTracks, resolveTrip } from "./trains";
 import { UserLocationTracker } from "./user-location";
 
@@ -57,7 +60,7 @@ interface DevViewState {
   zoom: number;
   pitch: number;
   bearing: number;
-  view: "subway" | "bike";
+  view: ViewMode;
 }
 const DEV_STATE_KEY = "dev-view-state";
 const devState = ((): DevViewState | null => {
@@ -69,7 +72,7 @@ const devState = ((): DevViewState | null => {
     return null;
   }
 })();
-const saveDevState = (view: "subway" | "bike") => {
+const saveDevState = (view: ViewMode) => {
   if (!import.meta.env.DEV) return;
   const c = map.getCenter();
   const state: DevViewState = {
@@ -375,10 +378,10 @@ map.on("load", async () => {
   let clockSkew = 0;
 
   // Rider-facing station view (doc01.03): the routes that stop here (static, from
-  // the track index) and, per direction, the next few trains arriving from the
+  // the track index) and, per direction, all trains arriving from the
   // live snapshot — the soonest upcoming arrival each Trip predicts for one of
   // this station's platforms.
-  const ARRIVALS_PER_DIRECTION = 5;
+  const trainLabels = new TrainLabels();
   // Express-diamond variants ("6X", "7X") are the same line as their trunk; the
   // panel folds them under the trunk roundel rather than showing a separate one.
   const trunkOf = (routeId: string) => routeId.replace(/X$/, "");
@@ -399,7 +402,9 @@ map.on("load", async () => {
       { tripId: string; routeId: string; arrival: number }[]
     > = { N: [], S: [] };
     for (const trip of snapshot?.trips ?? []) {
-      const stop = trip.upcoming.find((u) => platforms.has(u.stopId));
+      const stop = (trip.predictedStops ?? trip.upcoming).find((u) =>
+        platforms.has(u.stopId),
+      );
       if (!stop) continue;
       byDir[trip.direction].push({
         tripId: trip.tripId,
@@ -415,16 +420,17 @@ map.on("load", async () => {
       heading: label[dir] ?? HEADING[dir],
       arrivals: byDir[dir]
         .sort((a, b) => a.arrival - b.arrival)
-        .slice(0, ARRIVALS_PER_DIRECTION)
+
         .map((a) => ({
           tripId: a.tripId,
+          label: trainLabels.get(a.tripId),
           routeId: a.routeId,
           color: colorFor(a.routeId),
           time: fmtTime(a.arrival),
           wait: waitLabel(a.arrival - now),
         })),
     }));
-    return { routes, directions };
+    return { stopId: p.stopId, routes, directions };
   };
 
   // Resolve a geometric pick into the raw contract data used to render it: the
@@ -464,6 +470,7 @@ map.on("load", async () => {
       train: {
         routeId: trip.routeId,
         tripId: trip.tripId,
+        label: trainLabels.get(trip.tripId),
         color: pose?.color ?? "#9a9a9a",
         heading: trip.direction === "S" ? "Southbound" : "Northbound",
         uncertain: pose?.uncertain ?? false,
@@ -472,7 +479,7 @@ map.on("load", async () => {
           time: fmtTime(trip.lastKnownStop.at),
           stationIndex: indexOfStop(trip.lastKnownStop.stopId),
         },
-        next: trip.upcoming.slice(0, 3).map((u) => ({
+        next: (trip.predictedStops ?? trip.upcoming).map((u) => ({
           name: nameOfStop(u.stopId),
           time: fmtTime(u.arrival),
           stationIndex: indexOfStop(u.stopId),
@@ -598,7 +605,12 @@ map.on("load", async () => {
     openBikeIndex = null;
   });
 
+  const buses = new BusOverlay(map);
   map.on("click", (e) => {
+    if (viewMode === "bus") {
+      buses.pick(e.point);
+      return;
+    }
     const r = networkLayer.pick(e.point);
     if (r?.kind === "train" || r?.kind === "station") cancelNudge();
     if (r?.kind === "bikeStation") {
@@ -618,27 +630,29 @@ map.on("load", async () => {
 
   // View toggle (doc01.04): flip the layer's representation, and honor BV-3 — an
   // inspector opened in Subway View must not linger over an inert Bike View.
-  let viewMode: "subway" | "bike" = "subway";
-  menu.onViewToggle = () => {
-    viewMode = viewMode === "subway" ? "bike" : "subway";
-    menu.viewMode = viewMode;
-    networkLayer.setViewMode(viewMode);
-    if (viewMode === "bike") {
-      openPick = null;
-      syncInspector();
-      void loadBikeStations().then(pushBikeCounts);
-    } else {
-      // Symmetric with BV-3: a dock modal must not linger over Subway View.
-      closeBikePanel();
-    }
-    saveDevState(viewMode);
+  let viewMode: ViewMode = "subway";
+  menu.onViewSelect = (mode) => {
+    if (mode === viewMode) return;
+    if (viewMode === "bus") buses.set(false);
+    viewMode = mode;
+    menu.viewMode = mode;
+    menu.open = false;
+    cancelNudge();
+    openPick = null;
+    syncInspector();
+    closeBikePanel();
+    networkLayer.setViewMode(mode);
+    if (mode === "bus") buses.set(true);
+    if (mode === "bike") void loadBikeStations().then(pushBikeCounts);
+    saveDevState(mode);
   };
   if (import.meta.env.DEV) {
     // moveend misses pure pitch/rotate gestures, which end with their own events.
     map.on("moveend", () => saveDevState(viewMode));
     map.on("pitchend", () => saveDevState(viewMode));
     map.on("rotateend", () => saveDevState(viewMode));
-    if (devState?.view === "bike") menu.onViewToggle();
+    if (devState?.view === "bike" || devState?.view === "bus")
+      menu.onViewSelect(devState.view);
   }
 
   // Ease the camera to a point placed 33% down the screen, not dead center — the
@@ -688,6 +702,7 @@ map.on("load", async () => {
         logPredictionError(rec);
         statsPanel.error = rec;
       }
+      trainLabels.register(next.trips);
       snapshot = next;
       clockSkew = snapshot.asOf - Date.now();
       // Fold the fresh frame into the running estimate, re-basing each Trip onto

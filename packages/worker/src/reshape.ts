@@ -145,6 +145,7 @@ export function buildSnapshot(
 
     let lastKnownStop: TripState["lastKnownStop"];
     let upcoming: StopArrival[];
+    let predictedStops: StopArrival[] | undefined;
     let status: TripState["status"] = "progressing";
 
     if (atStop) {
@@ -174,6 +175,7 @@ export function buildSnapshot(
         // segment. Truncate the runway at the front so the Board holds it there
         // and blinks, instead of gliding onto stops it has not reached.
         upcoming = [committed];
+        if (beyond.length) predictedStops = [committed, ...beyond];
         status = "stalled";
       } else {
         upcoming = [committed, ...beyond];
@@ -197,6 +199,7 @@ export function buildSnapshot(
       direction: directionOf(nyct.direction, front),
       lastKnownStop,
       upcoming,
+      predictedStops,
       status,
     });
   }

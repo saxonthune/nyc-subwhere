@@ -1,7 +1,7 @@
 ---
 title: UI requirements
-summary: The Board's view-mode UI as a controlled, EARS-like list of shall-statements — Subway View, Bike View, and the toggle — plus the input-command bindings table
-tags: [product, requirements, ears, ui, views, bike-view, interaction]
+summary: The Board's view-mode UI as a controlled, EARS-like list of shall-statements — Subway, Bike and Bus views, view selection and map inspection — plus the input-command bindings table
+tags: [product, requirements, ears, ui, views, bus-view, bike-view, inspector, interaction]
 deps: [doc01.01, doc01.03]
 ---
 
@@ -17,23 +17,26 @@ why, not sizes or radii.
 
 ## Views (VW)
 
-- **VW-1.** The system shall render in exactly one of two views — Subway View or
-  Bike View — and shall render Subway View at load.
-- **VW-2.** Switching views shall change presentation only: polling, position
-  estimation, and motion continue unchanged, so Trips keep gliding and nothing is
-  re-fetched.
-- **VW-3.** Both views shall draw from the same baked geometry — Bike View draws
-  the junction-synthesized corridor centerlines the bake already publishes, so
-  lines connect through merges and splits and no second geometry asset exists.
+- **VW-1.** The Board shows one view at a time and starts in Subway View.
+- **VW-2.** Switching views preserves subway polling, position estimation and motion.
+- **VW-3.** Subway and Bike views draw from the same baked subway geometry.
 
-## View toggle (TG)
+## View selection (TG)
 
-- **TG-1.** The system shall display a view toggle button in the bottom-left bar,
-  between the Menu button and the update countdown.
-- **TG-2.** When the user presses the view toggle, the system shall switch the
-  Board to the other view.
-- **TG-3.** The toggle's label shall name the view a press switches to, not the
-  view currently shown.
+- **TG-1.** The bottom-left bar provides view selection between Menu and the update countdown.
+- **TG-2.** Selecting a view opens that view and closes the previous view's inspector.
+- **TG-3.** Each view control identifies the view it opens.
+
+## Bus View
+
+```yaml rhidoc-feature
+prefix: BUSV
+name: Bus View
+description: Riders can switch to the bus map from the view controls.
+```
+
+- **BUSV1.** [p] Bus View is directly selectable to the right of Bike View.
+- **BUSV2.** [p] On mobile the Bus View control uses a bus icon.
 
 ## Subway View (SV)
 
@@ -55,6 +58,50 @@ why, not sizes or radii.
 Bike View exists to clear the stage for cycling-oriented information; what that
 information is belongs to its own doc, not this one.
 
+## Train and station inspection
+
+```yaml rhidoc-feature
+prefix: INSP
+name: Train and station inspection
+description: Riders can navigate the map by selecting a train or station in the other's details.
+```
+
+### Train identifiers
+
+```yaml rhidoc-feature
+prefix: TID
+parent: INSP
+name: Train identifiers
+description: Riders can recognize the same train when moving between a station and that train.
+```
+
+- **TID1.** [p] The selected train displays a short, recognizable identifier.
+
+### Stop and arrival lists
+
+```yaml rhidoc-feature
+prefix: ILIST
+parent: INSP
+name: Stop and arrival lists
+description: Riders can explore all available predictions in the existing panel footprint.
+```
+
+- **ILIST1.** [p] The train panel scrolls through every available upcoming stop within the existing panel size.
+- **ILIST2.** [p] The station panel scrolls through every available arriving train within the existing panel size.
+- **ILIST3.** [p] Selecting a station in the train's stop list opens that station on the map.
+
+### Station arrival rows
+
+```yaml rhidoc-feature
+prefix: AROW
+parent: ILIST
+name: Station arrival rows
+description: Riders can identify an arriving train and follow it from the timetable onto the map.
+```
+
+- **AROW1.** [p] Each row shows the same train identifier as the train panel, underneath the arrival time and ETA.
+- **AROW2.** [p] Selecting an arrival opens that train on the map.
+
 ## Interaction nudge (NG)
 
 - **NG-1.** After a delay from load, the system shall show a banner above the
@@ -73,7 +120,7 @@ binds one input to the command it performs and the requirement it serves.
 
 | Target | Interaction | Action | Req |
 |---|---|---|---|
-| View toggle | tap | Switch to the other view; close any open inspector | TG-2, BV-3 |
+| View control | tap | Open its view and close the previous inspector | TG-2, BV-3 |
 | Station or Trip (Subway View) | tap | Open the inspector on it; skip or dismiss the nudge banner | SV-2, NG-2, NG-3 |
 | Any UI element, including the nudge banner | tap | Skip or dismiss the nudge banner | NG-2, NG-3 |
 | Station, Trip, or line (Bike View) | tap | Nothing | BV-2 |
