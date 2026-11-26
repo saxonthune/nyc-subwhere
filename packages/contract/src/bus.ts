@@ -66,6 +66,8 @@ export interface BusPosition {
   bearing?: number;
   /** Local direction of travel on the matched scheduled trip shape, clockwise from north. */
   routeBearing?: number;
+  nextStopId?: string;
+  nextSequence?: number;
   tripKey: string;
   vehicleId: string;
   observedAt: number;
@@ -87,4 +89,23 @@ export interface BusLive {
   tripUpdates: Record<string, BusUpdate>;
   positions: BusPosition[];
   feeds: { tripUpdates: BusFeedStatus; vehiclePositions: BusFeedStatus };
+}
+
+export interface BusTrip {
+  networkVersion: string;
+  tripKey: string;
+  serviceDate: string;
+  routeName: string;
+  headsign: string;
+  vehicle: BusPosition | null;
+  canceled: boolean;
+  calls: BusDeparture["downstream"];
+}
+
+export interface BusActivity {
+  networkVersion: string;
+  after: number;
+  until: number;
+  stops: string[];
+  shapes: Record<string, string[]>;
 }

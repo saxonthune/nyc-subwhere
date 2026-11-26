@@ -194,7 +194,7 @@ def build_feed(archive, feed, folder, days, stops, by_stop, curbs_by_raw):
             by_stop[stop_id].add(file)
         pattern = intern(tuple(visits), pattern_index[route], table["patterns"])
         offsets = intern(tuple(t-times[0] for t in times), offset_index[route], table["offsets"])
-        table["trips"].append([trip_id, feed+":"+service, trip["trip_headsign"], pattern, offsets, times[0]])
+        table["trips"].append([trip_id, feed+":"+service, trip["trip_headsign"], pattern, offsets, times[0], trip["shape_id"]])
         shape_id = trip["shape_id"]
         path_stops = tuple((visit[1], call["stop_id"], visit[0]) for visit, call in zip(visits, calls))
         path = intern((shape_id, path_stops), path_index, paths)
@@ -204,10 +204,31 @@ def build_feed(archive, feed, folder, days, stops, by_stop, curbs_by_raw):
         count += len(visits)
     if trips:
         raise ValueError(f"{len(trips)} trips without stops")
+    # The stop-query index is organized by route. The map needs only the services
+    # running today, so build a compact projection with the same timetable format.
+    activity = collections.defaultdict(list)
     for route, table in tables.items():
         dump(folder/"routes"/(feed+"-"+route+".json"),table)
+        grouped = collections.defaultdict(list)
+        for trip in table["trips"]:
+            grouped[trip[1]].append(trip)
+        for service_key, selected in grouped.items():
+            patterns, offsets, pattern_ids, offset_ids = [], [], {}, {}
+            compact = []
+            for trip_id, service, _, pattern, offset, start, shape in selected:
+                if pattern not in pattern_ids:
+                    pattern_ids[pattern] = len(patterns)
+                    patterns.append(table["patterns"][pattern])
+                if offset not in offset_ids:
+                    offset_ids[offset] = len(offsets)
+                    offsets.append(table["offsets"][offset])
+                compact.append([trip_id, service, "", pattern_ids[pattern], offset_ids[offset], start, shape])
+            activity[service_key].append(dict(feed=feed, routeId=route, routeName=table["routeName"],
+                                              patterns=patterns, offsets=offsets, trips=compact))
     for service in valid:
-        dump(folder/"services"/(feed+":"+service+".json"),matches[service])
+        key = feed+":"+service
+        dump(folder/"services"/(key+".json"), matches[service])
+        dump(folder/"activity"/(key+".json"), activity[key])
     shapes = collections.defaultdict(list)
     for r in rows(archive,"shapes"):
         if r["shape_id"] in shape_routes:
@@ -250,7 +271,7 @@ def build(source, output):
         dump(stage/"curbs.json",[s for key,s in stops.items() if key in by_stop])
         for index in range(64):
             dump(stage/f"stops-{index}.json",{k:sorted(v) for k,v in by_stop.items() if bucket(k)==index})
-        dump(stage/"release.json",dict(**network,days={k:sorted(v) for k,v in days.items()},maxSeconds=longest,archives=hashes))
+        dump(stage/"release.json",dict(**network,days={k:sorted(v) for k,v in days.items()},maxSeconds=longest,activityIndex=True,archives=hashes))
         for path in stage.rglob("*.json"):
             if path.stat().st_size >= 25*1024*1024:
                 raise ValueError(f"Oversized Worker asset {path.name}")

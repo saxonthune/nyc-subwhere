@@ -4,6 +4,7 @@ import type {
   BusNetwork,
 } from "@nyc-subwhere/contract";
 import { BusError, departures } from "../../bus/src/departures";
+import { inspectTrip, networkActivity } from "../../bus/src/inspection";
 import {
   type Release,
   dateAt,
@@ -48,8 +49,29 @@ export async function busApi(
     if (!network) throw new BusError(404, "No bus release covers this query");
     const version = network.networkVersion;
     if (url.pathname === "/api/bus/network") return Response.json(network);
-    if (!["/api/bus/departures", "/api/bus/live"].includes(url.pathname))
+    if (
+      ![
+        "/api/bus/departures",
+        "/api/bus/live",
+        "/api/bus/trip",
+        "/api/bus/activity",
+      ].includes(url.pathname)
+    )
       throw new BusError(404, "Unknown bus endpoint");
+    const activityCache =
+      url.pathname === "/api/bus/activity"
+        ? new Request(
+            new URL(
+              `/api/bus/activity?networkVersion=${encodeURIComponent(version)}`,
+              url.origin,
+            ),
+          )
+        : null;
+    const cache = activityCache ? await caches.open("bus-map-activity") : null;
+    if (activityCache && cache) {
+      const hit = await cache.match(activityCache);
+      if (hit) return hit;
+    }
     let frame = emptyLive(version);
     if (env.BUSTIME_API_KEY) {
       const instance = env.BUS_POLLER.get(
@@ -77,6 +99,20 @@ export async function busApi(
     if (url.pathname === "/api/bus/live")
       return Response.json(
         visibleFrame(frame, now, p.get("positionsOnly") === "1"),
+        { headers: { "cache-control": "no-store" } },
+      );
+    const release = await load<Release>(`${root(version)}/release.json`);
+    if (activityCache && cache) {
+      const response = Response.json(
+        await networkActivity(load, release, now, frame),
+        { headers: { "cache-control": "public,max-age=20" } },
+      );
+      ctx.waitUntil(cache.put(activityCache, response.clone()));
+      return response;
+    }
+    if (url.pathname === "/api/bus/trip")
+      return Response.json(
+        await inspectTrip(load, release, p.get("tripKey") ?? "", now, frame),
         { headers: { "cache-control": "no-store" } },
       );
     const stop = p.get("stopId");
@@ -133,7 +169,6 @@ export async function busApi(
         frame = pinned;
       }
     }
-    const release = await load<Release>(`${root(version)}/release.json`);
     const rows = await departures(
       load,
       release,

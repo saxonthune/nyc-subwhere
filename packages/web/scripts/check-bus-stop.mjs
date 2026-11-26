@@ -13,9 +13,14 @@ const browser = await chromium.launch({
   ],
 });
 try {
+  const width = Number(process.env.BUS_SCREEN_WIDTH ?? 1050);
+  const height = 760;
   const page = await browser.newPage({
-    viewport: { width: 1050, height: 760 },
+    viewport: { width, height },
+    isMobile: width < 480,
+    hasTouch: width < 480,
   });
+  page.setDefaultTimeout(20000);
   const manifest = await (await fetch(`${base}/api/bus/network`)).json();
   const stops = await (await fetch(new URL(manifest.stopsUrl, base))).json();
   const stop = stops.find((s) => s.stopId === stopId);
@@ -32,7 +37,28 @@ try {
       }),
     [stop.lon, stop.lat],
   );
+  const activityRequest = page.waitForResponse((r) =>
+    r.url().includes("/api/bus/activity?"),
+  );
   await page.getByRole("button", { name: "Bus view", exact: true }).click();
+  const activity = await (await activityRequest).json();
+  const activeStops = new Set(activity.stops);
+  const inactive = stops.find((s) => !activeStops.has(s.stopId));
+  if (inactive) {
+    await page.waitForFunction(
+      (id) =>
+        window.__map.getFeatureState({ source: "bus-curbs", id }).inactive ===
+        true,
+      inactive.stopId,
+    );
+    const inactiveRows = await (
+      await fetch(
+        `${base}/api/bus/departures?${new URLSearchParams({ stopId: inactive.stopId, after: String(activity.after), until: String(activity.until), networkVersion: manifest.networkVersion })}`,
+      )
+    ).json();
+    assert.equal(inactiveRows.departures.length, 0);
+    console.log("Inactive curb", inactive.name);
+  }
   await page.waitForFunction(
     (id) =>
       window.__map.getLayer("bus-curbs") &&
@@ -48,26 +74,86 @@ try {
         window.__map.getSource("bus-vehicles")?.serialize().data.features
           .length > 0,
     );
-    const observed = await page.evaluate(() => {
-      const map = window.__map;
-      const features = map.getSource("bus-vehicles").serialize().data.features;
-      const p = features.find(
-        (f) => Date.now() - f.properties.observedAt < 120000,
-      );
-      map.jumpTo({ center: p.geometry.coordinates });
-      return p.properties;
-    });
-    await page.waitForFunction(
-      (id) =>
-        window.__map
-          .queryRenderedFeatures(
-            [window.innerWidth / 2, window.innerHeight / 2],
-            { layers: ["bus-vehicles"] },
-          )
-          .some((f) => f.properties.vehicleId === id),
-      observed.vehicleId,
+    const positions = await page.evaluate(
+      () => window.__map.getSource("bus-vehicles").serialize().data.features,
     );
-    console.log("Rendered live bus", observed.vehicleId, observed.tripKey);
+    let chosen;
+    for (const feature of positions.slice(0, 24)) {
+      const trip = await (
+        await fetch(
+          `${base}/api/bus/trip?${new URLSearchParams({ networkVersion: manifest.networkVersion, tripKey: feature.properties.tripKey })}`,
+        )
+      ).json();
+      if (
+        trip.vehicle &&
+        trip.calls.length > 2 &&
+        activeStops.has(trip.calls[1].stopId)
+      ) {
+        chosen = feature;
+        break;
+      }
+    }
+    assert.ok(chosen, "Expected a tracked bus with an upcoming boarding stop");
+    await page.evaluate(
+      (c) => window.__map.jumpTo({ center: c, zoom: 19 }),
+      chosen.geometry.coordinates,
+    );
+    await page.waitForFunction(
+      (key) =>
+        window.__map.queryRenderedFeatures([innerWidth / 2, innerHeight / 2], {
+          layers: ["bus-vehicles"],
+        })[0]?.properties.tripKey === key,
+      chosen.properties.tripKey,
+    );
+    const tripRequest = page.waitForResponse((r) =>
+      r.url().includes("/api/bus/trip?"),
+    );
+    await page.mouse.click(width / 2, height / 2);
+    const inspected = await (await tripRequest).json();
+    assert.equal(inspected.tripKey, chosen.properties.tripKey);
+    const upcoming = page.getByRole("list", { name: "Upcoming stops" });
+    await upcoming.waitFor();
+    assert.equal(await upcoming.locator("li").count(), inspected.calls.length);
+    assert.ok(
+      (await page.locator("bus-panel h2").innerText()).includes(
+        inspected.vehicle.vehicleId.split("_").at(-1),
+      ),
+    );
+    if (process.env.BUS_TRIP_SCREENSHOT)
+      await page.screenshot({ path: process.env.BUS_TRIP_SCREENSHOT });
+    const call = inspected.calls[1];
+    const target = stops.find((s) => s.stopId === call.stopId);
+    const curbRequest = page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/bus/departures?") &&
+        new URL(r.url()).searchParams.get("stopId") === call.stopId,
+    );
+    await upcoming.locator("button").nth(1).click();
+    const arrivals = await (await curbRequest).json();
+    assert.equal(await page.locator("bus-panel h2").innerText(), target.name);
+    await page.waitForFunction(
+      (c) => {
+        const p = window.__map.project(c);
+        return (
+          Math.abs(p.x - innerWidth / 2) < 4 &&
+          Math.abs(p.y - innerHeight * 0.33) < 4
+        );
+      },
+      [target.lon, target.lat],
+    );
+    const back = page.waitForResponse((r) =>
+      r.url().includes("/api/bus/trip?"),
+    );
+    await page.locator("bus-panel .trip-link").first().click();
+    const linked = await (await back).json();
+    assert.equal(linked.tripKey, arrivals.departures[0].tripKey);
+    console.log(
+      "Bus → stop → trip",
+      chosen.properties.vehicleId,
+      target.name,
+      linked.tripKey,
+    );
+    await page.getByRole("button", { name: "Close bus details" }).click();
     await page.evaluate(
       (c) => window.__map.jumpTo({ center: c }),
       [stop.lon, stop.lat],
@@ -84,7 +170,7 @@ try {
   const response = page.waitForResponse((r) =>
     r.url().includes("/api/bus/departures?"),
   );
-  await page.mouse.click(525, 380);
+  await page.mouse.click(width / 2, height / 2);
   const reply = await response;
   const api = await reply.json();
   if (process.env.BUS_VERIFY_LIVE)
@@ -98,15 +184,13 @@ try {
   assert.ok(row, "Choose a curb with service in the next hour");
   const direct = await (await fetch(reply.url())).json();
   assert.deepEqual(direct.departures[rowIndex], row);
-  const details = page.locator("bus-panel details").nth(rowIndex);
+  const entry = page.locator("bus-panel li[data-trip-key]").nth(rowIndex);
+  const details = entry.locator("details");
   await details.locator("summary").click();
-  assert.equal(await details.getAttribute("data-trip-key"), row.tripKey);
+  assert.equal(await entry.getAttribute("data-trip-key"), row.tripKey);
+  assert.equal(await entry.getAttribute("data-service-date"), row.serviceDate);
   assert.equal(
-    await details.getAttribute("data-service-date"),
-    row.serviceDate,
-  );
-  assert.equal(
-    await details.locator("summary time").getAttribute("datetime"),
+    await entry.locator(".trip-link time").getAttribute("datetime"),
     new Date(row.boarding.time).toISOString(),
   );
   assert.equal(await details.locator("li").count(), row.downstream.length);

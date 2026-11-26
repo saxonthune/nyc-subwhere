@@ -170,6 +170,10 @@ export async function pollBuses(
               lat: v.position.latitude,
               lon: v.position.longitude,
               observedAt,
+              nextStopId: v.stopId || undefined,
+              nextSequence: present(v, "currentStopSequence")
+                ? (v.currentStopSequence ?? undefined)
+                : undefined,
             };
             positions.push(position);
             if (m.pathIndex != null) {
@@ -183,6 +187,7 @@ export async function pollBuses(
                     Math.abs(update.observedAt - observedAt) <= 60000
                   ? next.sequence
                   : undefined;
+              position.nextSequence = sequence ?? undefined;
               const batch = byFeed.get(m.feed) ?? [];
               batch.push({
                 position,

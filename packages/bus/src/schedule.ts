@@ -19,11 +19,13 @@ export interface RouteTable {
     pattern: number,
     offsets: number,
     start: number,
+    shapeId?: string,
   ][];
 }
 export interface Release extends BusNetwork {
   days: Record<string, string[]>;
   maxSeconds: number;
+  activityIndex?: boolean;
 }
 export type LoadAsset = <T>(path: string) => Promise<T>;
 export const root = (version: string) =>

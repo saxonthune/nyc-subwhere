@@ -4,7 +4,7 @@ Subwhere owns timetable lookup and Bus Time reconciliation. Running Late NYC sup
 
 ## Start here
 
-The local verification used `http://127.0.0.1:8797` for live data and `http://127.0.0.1:8798` for the schedule-only KV archive. In Subwhere, select **Bus view** in the bottom bar, and tap a lavender curb. Expand a departure to see its service date and downstream calls. Cyan rectangles mark recently observed vehicles on violet routes. The front chevron follows the local direction of the scheduled trip shape at the bus’s GPS position. The Worker uses the approaching stop to distinguish overlapping legs. An off-route or ambiguous position gets a plain marker.
+The local verification used `http://127.0.0.1:8797` for live data and `http://127.0.0.1:8798` for the schedule-only KV archive. In Subwhere, select **Bus view** in the bottom bar, and tap a lavender curb. Tap a departure to inspect its trip, or expand its downstream stops. Tap a cyan bus to see its vehicle number, route, destination and upcoming stops. Selecting a stop opens its departures and centers the map there. Selecting a trip centers its fresh vehicle position, or its next stop when running from the timetable. Cyan rectangles mark recently observed vehicles on violet routes. Light-grey stops and route variants have no eligible boardings in the next hour. The map refreshes this classification every 30 seconds. The front chevron follows the local direction of the scheduled trip shape at the bus’s GPS position. The Worker uses the approaching stop to distinguish overlapping legs. An off-route or ambiguous position gets a plain marker.
 
 - [Version 1 wire types](../contract/src/bus.ts)
 - [Importable corridor fixture](../contract/fixtures/bus-corridor-v1.json)
@@ -33,6 +33,8 @@ curl 'http://127.0.0.1:8798/api/bus/departures?stopId=404160&after=1795713300000
 ```
 
 `GET /api/bus/live` accepts the same network pin. It returns updates keyed by trip instance, positions, and per-feed timestamps, last successful fetch, match counts and freshness. `positionsOnly=1` omits update details for map reads. The freshness window for both feed and entity timestamps is two minutes. The poller retains in-force cancellations through the trip's scheduled end. A partial outage preserves the other feed. The departure endpoint handles the overlay and remains usable when Bus Time is unavailable.
+
+The map reads `GET /api/bus/trip?tripKey=…&networkVersion=…` for an individual service-day trip and `GET /api/bus/activity?networkVersion=…` for active curb IDs and shape IDs grouped by the corresponding manifest asset URL. The activity window is half-open and uses the same effective departure times, boarding rules, downstream alighting eligibility and service exceptions as the curb lookup. Shared corridors draw active service above inactive variants. Older pinned releases without the activity index retain the usual map colors.
 
 ## Reproduce the build and previews
 

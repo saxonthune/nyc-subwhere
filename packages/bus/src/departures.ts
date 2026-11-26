@@ -16,7 +16,7 @@ import {
   tripKey,
 } from "./schedule";
 
-function effectiveCalls(
+export function effectiveCalls(
   table: RouteTable,
   trip: RouteTable["trips"][number],
   zero: number,
@@ -69,10 +69,29 @@ function effectiveCalls(
       sequence,
       arrival,
       departure,
+      skipped: p?.relationship === 1,
       canBoard: pickup === 0 && p?.relationship !== 1,
       canAlight: dropoff === 0 && p?.relationship !== 1,
     };
   });
+}
+// Cancellation outlives prediction freshness. All timetable consumers apply the
+// same rule, including when only one of the realtime feeds is available.
+export function timingForTrip(
+  frame: BusLive | undefined,
+  key: string,
+  now: number,
+) {
+  const observation = frame?.tripUpdates[key];
+  if (observation?.canceledUntil && observation.canceledUntil >= now)
+    return "canceled";
+  if (
+    observation &&
+    fresh(frame?.feeds.tripUpdates.timestamp ?? null, now) &&
+    fresh(observation.observedAt, now)
+  )
+    return observation;
+  return undefined;
 }
 export class BusError extends Error {
   constructor(
@@ -143,15 +162,8 @@ export async function departures(
       for (const trip of table.trips) {
         if (!services.has(trip[1]) || !indices[trip[3]].length) continue;
         const key = tripKey(table.feed, trip[0], date);
-        const observation = frame?.tripUpdates[key];
-        if (observation?.canceledUntil && observation.canceledUntil >= q.now)
-          continue;
-        const update =
-          observation &&
-          fresh(frame?.feeds.tripUpdates.timestamp ?? null, q.now) &&
-          fresh(observation.observedAt, q.now)
-            ? observation
-            : undefined;
+        const update = timingForTrip(frame, key, q.now);
+        if (update === "canceled") continue;
         const offsets = table.offsets[trip[4]];
         for (const i of indices[trip[3]]) {
           const scheduled = zero + (trip[5] + offsets[i * 2 + 1]) * 1000;
