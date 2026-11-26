@@ -1,4 +1,5 @@
 import { LitElement, css, html, nothing } from "lit";
+import { repeat } from "lit/directives/repeat.js";
 
 // The inspector shows what drove the geometry that was clicked (doc01.03).
 // Stations and segments dump their raw baked props (`data`) for a developer;
@@ -22,6 +23,7 @@ export interface TrainStop {
   stationIndex: number | null;
 }
 export interface TrainView {
+  label: string;
   routeId: string;
   tripId: string; // per-train identifier from the feed
   color: string; // "#RRGGBB", the route color
@@ -35,6 +37,7 @@ export interface TrainView {
 // (from the baked track index) and, per direction, the soonest trains arriving
 // from the live snapshot. Times/waits are already formatted; the panel lays out.
 export interface StationView {
+  stopId: string;
   routes: RouteBullet[];
   directions: DirectionBoard[];
 }
@@ -47,6 +50,7 @@ export interface DirectionBoard {
   arrivals: StationArrival[];
 }
 export interface StationArrival {
+  label: string;
   tripId: string; // selecting a row inspects + centers this train
   routeId: string;
   color: string;
@@ -77,21 +81,28 @@ export class InspectorPanel extends LitElement {
       color: #e8e8e8;
     }
     .panel {
-      min-width: 320px;
-      max-width: 560px;
-      background: rgba(18, 18, 20, 0.94);
-      border: 1px solid rgba(255, 255, 255, 0.14);
+      width: min(320px,calc(100vw - 24px));
+      box-sizing: border-box;
+      background: #253545;
+      color: #f2f5f8;
       border-radius: 8px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 8px 32px #0007;
       overflow: hidden;
+    }
+    .panel.station-panel {
+      width: min(340px,calc(100vw - 24px));
+    }
+    @media (max-width: 1440px) {
+      :host {
+        bottom: 76px;
+      }
     }
     header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 8px 12px;
-      background: rgba(255, 255, 255, 0.06);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      background: #30455a;
     }
     .title {
       font-weight: 600;
@@ -142,51 +153,85 @@ export class InspectorPanel extends LitElement {
       font-weight: 700;
       font-size: 16px;
     }
-    .trip-id {
-      font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-      color: #8a8a8a;
-      margin-bottom: 12px;
-      word-break: break-all;
+    .train-id {
+      font: 600 13px/1.4 ui-monospace,monospace;
+      letter-spacing: .025em;
+      color: #d1e5f8;
+    }
+    .train-id-label {
+      font-size: 12px;
+      color: #c3cfda;
+      margin-right: 6px;
     }
     .heading {
-      color: #b9b9b9;
+      color: #e3eaf1;
     }
     .uncertain {
       margin-left: auto;
       font-size: 11px;
-      color: #ffcf4d;
-      border: 1px solid rgba(255, 207, 77, 0.5);
+      color: #ffe6a6;
+      background: #504532;
       border-radius: 4px;
-      padding: 1px 6px;
+      padding: 2px 5px;
     }
     .stops {
       list-style: none;
       margin: 0;
       padding: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+      scrollbar-width: thin;
+      scrollbar-color: #7d91a4 #253545;
+    }
+    .train .stops {
+      max-height: min(126px,32dvh);
+      margin-top: 8px;
     }
     .stop {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 5px 0;
-      border-top: 1px solid rgba(255, 255, 255, 0.07);
+      border-top: 1px solid #425161;
     }
-    .stop.last .name {
-      color: #9a9a9a;
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      box-sizing: border-box;
+      width: 100%;
+      padding: 5px 2px;
+      color: inherit;
+      text-align: left;
+      font: inherit;
+    }
+    button.row {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    button.row:hover {
+      background: #354b60;
+    }
+    button:focus-visible {
+      outline: 2px solid #92d8ff;
+      outline-offset: -2px;
     }
     .name {
       font-weight: 500;
     }
     .role {
-      font-size: 11px;
-      color: #7d7d7d;
+      display: inline-block;
+      font-size: 10px;
       text-transform: uppercase;
-      letter-spacing: 0.04em;
+      letter-spacing: .04em;
+      padding: 1px 4px;
+      margin-left: 3px;
+      border-radius: 3px;
+      background: #425568;
+      color: #e1eaf4;
     }
-    .time {
+    .time,.wait {
       font-variant-numeric: tabular-nums;
-      color: #cfcfcf;
       white-space: nowrap;
     }
     .station {
@@ -194,47 +239,50 @@ export class InspectorPanel extends LitElement {
     }
     .routes {
       display: flex;
-      flex-wrap: wrap;
       justify-content: center;
+      flex-wrap: wrap;
       gap: 6px;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
     }
     .boards {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 18px;
+      grid-template-columns: repeat(2,minmax(0,1fr));
+      column-gap: 12px;
+      row-gap: 4px;
+    }
+    .board {
+      display: grid;
+      grid-row: span 2;
+      grid-template-rows: subgrid;
+      min-width: 0;
     }
     .dir-head {
       font-size: 11px;
       text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: #9a9a9a;
-      margin-bottom: 6px;
+      letter-spacing: .04em;
+      color: #c3cfda;
     }
-    .arr {
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    .board .stops {
+      max-height: min(208px,36dvh);
+    }
+    .arrival {
+      display: grid;
+      grid-template-columns: 20px 1fr auto;
+      column-gap: 4px;
+      row-gap: 2px;
+      font-size: 13px;
+    }
+    .arrival .train-id {
+      grid-column: 2/-1;
+      font-size: 12px;
     }
     .wait {
-      font-variant-numeric: tabular-nums;
-      color: #cfcfcf;
-      white-space: nowrap;
+      color: #c2d0db;
     }
     .empty {
-      color: #7d7d7d;
+      color: #c2d0db;
       font-size: 12px;
       padding: 5px 0;
-    }
-    .stop.link {
-      cursor: pointer;
-      margin: 0 -6px;
-      padding-left: 6px;
-      padding-right: 6px;
-      border-radius: 5px;
-    }
-    .stop.link:hover {
-      background: rgba(255, 255, 255, 0.08);
     }
   `;
 
@@ -274,7 +322,14 @@ export class InspectorPanel extends LitElement {
   // baseline, empty descender space below) and off horizontally by its side
   // bearing. The only font-independent fix is to measure the actually-rendered
   // bounding box and translate its center onto the circle center (15, 15).
+  private selectedKey?: string;
   updated() {
+    const key = this.target?.train?.tripId ?? this.target?.station?.stopId;
+    if (key !== this.selectedKey) {
+      for (const list of this.renderRoot.querySelectorAll(".stops"))
+        list.scrollTop = 0;
+      this.selectedKey = key;
+    }
     const texts =
       this.renderRoot.querySelectorAll<SVGTextElement>(".bullet text");
     for (const text of texts) {
@@ -290,7 +345,7 @@ export class InspectorPanel extends LitElement {
     const t = this.target;
     if (!t) return nothing;
     return html`
-      <div class="panel">
+      <div class="panel ${t.station ? "station-panel" : ""}">
         <header>
           <span class="title">${t.title}</span>
           <button class="close" @click=${this.close} aria-label="Close">
@@ -337,17 +392,16 @@ export class InspectorPanel extends LitElement {
                 ${
                   d.arrivals.length
                     ? html`<ul class="stops">
-                        ${d.arrivals.map(
+                        ${repeat(
+                          d.arrivals,
+                          (a) => a.tripId,
                           (a) => html`
-                            <li
-                              class="stop link"
-                              @click=${() => this.selectTrip(a.tripId)}
-                            >
-                              <span class="arr">
+                            <li class="stop">
+                              <button class="row arrival" title=${a.tripId} @click=${() => this.selectTrip(a.tripId)}>
                                 ${this.bullet(a.routeId, a.color, true)}
-                                <span class="time">${a.time}</span>
-                              </span>
-                              <span class="wait">${a.wait}</span>
+                                <span class="time">${a.time}</span><span class="wait">${a.wait}</span>
+                                <span class="train-id">${a.label}</span>
+                              </button>
                             </li>
                           `,
                         )}
@@ -374,12 +428,10 @@ export class InspectorPanel extends LitElement {
               : nothing
           }
         </div>
-        <div class="trip-id">${v.tripId}</div>
+        <div title=${v.tripId}><span class="train-id-label">Train ID</span><strong class="train-id">${v.label}</strong></div>
         <ul class="stops">
-          ${this.trainStopRow(v.lastStop, "departed", true)}
-          ${v.next.map((s, i) =>
-            this.trainStopRow(s, i === 0 ? "next" : null, false),
-          )}
+          ${this.trainStopRow(v.lastStop, "last known")}
+          ${v.next.map((s, i) => this.trainStopRow(s, i === 0 ? "next" : null))}
         </ul>
       </div>
     `;
@@ -387,20 +439,10 @@ export class InspectorPanel extends LitElement {
 
   // One train-inspector stop row. Clickable (navigates to the station) only when
   // the stop resolved to a baked station.
-  private trainStopRow(s: TrainStop, role: string | null, last: boolean) {
-    const clickable = s.stationIndex != null;
-    return html`
-      <li
-        class="stop ${last ? "last" : ""} ${clickable ? "link" : ""}"
-        @click=${() => clickable && this.selectStation(s.stationIndex as number)}
-      >
-        <span>
-          <span class="name">${s.name}</span>
-          ${role ? html`<span class="role"> · ${role}</span>` : nothing}
-        </span>
-        <span class="time">${s.time}</span>
-      </li>
-    `;
+  private trainStopRow(s: TrainStop, role: string | null) {
+    const content = html`<span><span class="name">${s.name}</span>${role ? html`<span class="role">${role}</span>` : nothing}</span><span class="time">${s.time}</span>`;
+    const index = s.stationIndex;
+    return html`<li class="stop">${index === null ? html`<div class="row">${content}</div>` : html`<button class="row" @click=${() => this.selectStation(index)}>${content}</button>`}</li>`;
   }
 }
 

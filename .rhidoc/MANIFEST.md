@@ -35,7 +35,7 @@ Orphaned attachments (non-md files with no corresponding root .md) are reported 
 | doc01.01 | `01-glossary.md` | Load-bearing domain vocabulary — GTFS-anchored terms, the project's own coined terms, and the ambiguities to watch | product, glossary, vocabulary, gtfs | doc01.02 | doc01.02, doc01.03, doc01.04, doc02.01, doc02.02, doc02.03, doc02.05 | — |
 | doc01.02 | `02-development-ethos.md` | How this project is built with an agent — lessons carried from the FIFA-bracketing DA-RESULTS retrospective | product, process, ethos, naming, human-agent | doc01.01 | doc01.01 | — |
 | doc01.03 | `03-behaviors.md` | EARS behavioral intent for the Board — render live trips, glide between polls, never render a train at or past a Station it has not been observed to reach (segment-ahead error is fine, station-crossing is not), ride track by stops (off-route reroutes), blink when position is uncertain, reveal directional tracks on zoom, give every route on shared track representation, render the network with depth (raised track, pucks, platform boxes), seat it on grey extruded borough land over a dark-navy water disc that fades into the backdrop, tap to inspect | product, behaviors, ears, rendering, interaction | doc01.01, doc02.01, doc02.03, doc02.05 | doc01.04, doc02.07 | — |
-| doc01.04 | `04-ui-requirements.md` | The Board's view-mode UI as a controlled, EARS-like list of shall-statements — Subway View, Bike View, and the toggle — plus the input-command bindings table | product, requirements, ears, ui, views, bike-view, interaction | doc01.01, doc01.03 | — | — |
+| doc01.04 | `04-ui-requirements.md` | The Board's view-mode UI as a controlled, EARS-like list of shall-statements — Subway, Bike and Bus views, view selection and map inspection — plus the input-command bindings table | product, requirements, ears, ui, views, bus-view, bike-view, inspector, interaction | doc01.01, doc01.03 | — | — |
 
 ## 02-architecture — Architecture
 
@@ -64,6 +64,7 @@ Quick lookup for file-path→doc mapping:
 | `behaviors` | doc01.03 |
 | `bike-view` | doc01.04 |
 | `build-time` | doc02.05 |
+| `bus-view` | doc01.04 |
 | `cartography` | doc02.07 |
 | `citibike` | doc02.09 |
 | `cloudflare` | doc02.04 |
@@ -85,6 +86,7 @@ Quick lookup for file-path→doc mapping:
 | `graphics` | doc02.08 |
 | `gtfs` | doc01.01, doc02.02, doc02.05 |
 | `human-agent` | doc01.02 |
+| `inspector` | doc01.04 |
 | `interaction` | doc01.03, doc01.04 |
 | `interpolation` | doc02.01, doc02.06 |
 | `junctions` | doc02.07 |

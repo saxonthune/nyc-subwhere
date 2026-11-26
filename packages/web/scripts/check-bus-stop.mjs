@@ -32,8 +32,7 @@ try {
       }),
     [stop.lon, stop.lat],
   );
-  await page.getByRole("button", { name: "Menu", exact: true }).click();
-  await page.getByRole("button", { name: "Show buses" }).click();
+  await page.getByRole("button", { name: "Bus view", exact: true }).click();
   await page.waitForFunction(
     (id) =>
       window.__map.getLayer("bus-curbs") &&
