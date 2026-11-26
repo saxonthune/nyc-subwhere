@@ -147,6 +147,9 @@ export class Menu extends LitElement {
       height: 16px;
       display: block;
     }
+    .view > .icon {
+      display: none;
+    }
     .locate {
       line-height: 1;
     }
@@ -174,9 +177,16 @@ export class Menu extends LitElement {
     }
     @media (max-width: 480px) {
       .view {
-        min-width: 40px;
-        min-height: 42px;
-        padding: 9px;
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+      }
+      .view > .icon {
+        display: block;
+        width: 20px;
+        height: 20px;
       }
       .full {
         display: none;
@@ -228,7 +238,7 @@ export class Menu extends LitElement {
           <span class="full">Menu</span><span class="short">☰</span>
         </button>
         <div class="views" role="group" aria-label="Map view">
-          ${views.map(({ mode, label, icon }) => html`<button class="view" aria-label=${label} title=${label} aria-pressed=${this.viewMode === mode} @click=${() => this.onViewSelect?.(mode)}><span class="full">${label}</span><span class="short">${icon}</span></button>`)}
+          ${views.map(({ mode, label, icon }) => html`<button class="view" aria-label=${label} title=${label} aria-pressed=${this.viewMode === mode} @click=${() => this.onViewSelect?.(mode)}><span class="full">${label}</span>${icon}</button>`)}
         </div>
         ${
           this.locateVisible
