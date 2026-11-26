@@ -10,13 +10,13 @@ import { repeat } from "lit/directives/repeat.js";
 import type { Map as CityMap, GeoJSONSource, PointLike } from "maplibre-gl";
 
 const busColors = {
-  route: "#18b8df",
-  curb: "#a2e5f0",
-  curbRim: "#124455",
+  route: "#997de8",
+  curb: "#dccbfa",
+  curbRim: "#45385c",
   selectedCurb: "#ffffff",
-  vehicle: "#ffc374",
-  vehicleRim: "#533725",
-  chevron: "#ad702f",
+  vehicle: "#60f5ed",
+  vehicleRim: "#134a53",
+  chevron: "#148d99",
 };
 
 // A north-facing sprite, shared by every vehicle and rotated by the symbol layer.
@@ -284,7 +284,7 @@ export class BusOverlay {
           tripKey: p.tripKey,
           vehicleId: p.vehicleId,
           observedAt: p.observedAt,
-          ...(p.bearing != null ? { bearing: p.bearing } : {}),
+          ...(p.routeBearing != null ? { bearing: p.routeBearing } : {}),
         },
         geometry: { type: "Point", coordinates: [p.lon, p.lat] },
       })),

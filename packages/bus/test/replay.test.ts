@@ -123,6 +123,70 @@ test("vehicle bearings distinguish true north from an absent or invalid directio
     [0, 90, 0, undefined, undefined],
   );
 });
+test("published trip path directs buses along the same street in opposite directions", async () => {
+  const shapedLoad = async <T>(path: string) => {
+    if (path.endsWith("/services/m%3Aweekday.json"))
+      return { early: ["demo", 40000, 0], later: ["demo", 40000, 1] } as T;
+    if (path.endsWith("/shapes-m.json"))
+      return {
+        features: [
+          {
+            properties: { shapeId: "shared" },
+            geometry: {
+              coordinates: [
+                [-74, 40.7],
+                [-73.999, 40.7],
+              ],
+            },
+          },
+        ],
+        tripPaths: [
+          {
+            shapeId: "shared",
+            reverse: false,
+            stops: [
+              [1, "west", 0],
+              [2, "east", 1],
+            ],
+          },
+          {
+            shapeId: "shared",
+            reverse: true,
+            stops: [
+              [1, "east", 1],
+              [2, "west", 0],
+            ],
+          },
+        ],
+      } as T;
+    return load<T>(path);
+  };
+  const bytes = message(
+    ["early", "later"].map((id, i) => ({
+      id,
+      vehicle: {
+        trip: descriptor(id),
+        vehicle: { id },
+        stopId: i ? "west" : "east",
+        position: { latitude: 40.7, longitude: -73.9995, bearing: 0 },
+      },
+    })),
+  );
+  const frame = await pollBuses(
+    release,
+    shapedLoad,
+    async (kind) => (kind === "vehiclePositions" ? bytes : updates),
+    now,
+  );
+  assert.deepEqual(
+    frame.positions.map((p) => p.routeBearing),
+    [90, 270],
+  );
+  assert.deepEqual(
+    frame.positions.map((p) => p.bearing),
+    [0, 0],
+  );
+});
 test("wire replay reconciles live and scheduled calls, preserves valid cancellations across failures", async () => {
   const frame = await pollBuses(
     release,

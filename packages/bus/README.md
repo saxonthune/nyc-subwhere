@@ -4,7 +4,7 @@ Subwhere owns timetable lookup and Bus Time reconciliation. Running Late NYC sup
 
 ## Start here
 
-The local verification used `http://127.0.0.1:8797` for live data and `http://127.0.0.1:8798` for the schedule-only KV archive. In Subwhere, select **Bus view** in the bottom bar, and tap an ice-blue curb. Expand a departure to see its service date and downstream calls. Amber rectangles mark recently observed vehicles. A darker chevron marks the front when Bus Time supplies a bearing.
+The local verification used `http://127.0.0.1:8797` for live data and `http://127.0.0.1:8798` for the schedule-only KV archive. In Subwhere, select **Bus view** in the bottom bar, and tap a lavender curb. Expand a departure to see its service date and downstream calls. Cyan rectangles mark recently observed vehicles on violet routes. The front chevron follows the local direction of the scheduled trip shape at the bus’s GPS position. The Worker uses the approaching stop to distinguish overlapping legs. An off-route or ambiguous position gets a plain marker.
 
 - [Version 1 wire types](../contract/src/bus.ts)
 - [Importable corridor fixture](../contract/fixtures/bus-corridor-v1.json)

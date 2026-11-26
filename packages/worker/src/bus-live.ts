@@ -1,5 +1,6 @@
 import type { BusFeedStatus, BusLive, BusUpdate } from "@nyc-subwhere/contract";
 import { Reader } from "protobufjs/minimal.js";
+import { BusPaths, type VehicleOnPath } from "../../bus/src/route-heading";
 import {
   type LoadAsset,
   type Release,
@@ -17,7 +18,13 @@ import type { Env } from "./index";
 type Kind = "tripUpdates" | "vehiclePositions";
 const kinds: Kind[] = ["tripUpdates", "vehiclePositions"];
 const endpoints = "https://gtfsrt.prod.obanyc.com/";
-type TripMatch = { feed: string; route: string; end: number; key: string };
+type TripMatch = {
+  feed: string;
+  route: string;
+  end: number;
+  pathIndex?: number;
+  key: string;
+};
 type Matches = Map<string, TripMatch[]>;
 async function matchesForDate(
   load: LoadAsset,
@@ -27,11 +34,17 @@ async function matchesForDate(
   const matches: Matches = new Map();
   for (const service of release.days[date] ?? []) {
     const feed = service.split(":")[0];
-    const trips = await load<Record<string, [string, number]>>(
+    const trips = await load<Record<string, [string, number, number?]>>(
       `${root(release.networkVersion)}/services/${encodeURIComponent(service)}.json`,
     );
-    for (const [id, [route, seconds]] of Object.entries(trips)) {
-      const match = { feed, route, end: seconds, key: tripKey(feed, id, date) };
+    for (const [id, [route, seconds, pathIndex]] of Object.entries(trips)) {
+      const match = {
+        feed,
+        route,
+        end: seconds,
+        pathIndex,
+        key: tripKey(feed, id, date),
+      };
       const list = matches.get(id);
       if (list) list.push(match);
       else matches.set(id, [match]);
@@ -77,6 +90,7 @@ export async function pollBuses(
   fetchFeed: FetchFeed,
   now: number,
   previous?: BusLive,
+  paths = new BusPaths(release.networkVersion, load),
 ): Promise<BusLive> {
   const old =
     previous?.networkVersion === release.networkVersion ? previous : undefined;
@@ -108,6 +122,7 @@ export async function pollBuses(
       };
       const updates = keepCancellations(frame.tripUpdates, now);
       const positions: BusLive["positions"] = [];
+      const byFeed = new Map<string, VehicleOnPath[]>();
       for (const entity of entities(bytes)) {
         const data =
           kind === "tripUpdates" ? entity.tripUpdate : entity.vehicle;
@@ -148,14 +163,35 @@ export async function pollBuses(
               Number.isFinite(bearing) &&
               bearing >= 0 &&
               bearing <= 360;
-            positions.push({
+            const position: BusLive["positions"][number] = {
               bearing: hasBearing ? bearing % 360 : undefined,
               tripKey: m.key,
               vehicleId: v.vehicle.id,
               lat: v.position.latitude,
               lon: v.position.longitude,
               observedAt,
-            });
+            };
+            positions.push(position);
+            if (m.pathIndex != null) {
+              const stopId = v.stopId || undefined;
+              const update = frame.tripUpdates[m.key];
+              const next = update?.calls[0];
+              const sequence = present(v, "currentStopSequence")
+                ? v.currentStopSequence
+                : next &&
+                    next.stopId === stopId &&
+                    Math.abs(update.observedAt - observedAt) <= 60000
+                  ? next.sequence
+                  : undefined;
+              const batch = byFeed.get(m.feed) ?? [];
+              batch.push({
+                position,
+                pathIndex: m.pathIndex,
+                stopId,
+                sequence: sequence ?? undefined,
+              });
+              byFeed.set(m.feed, batch);
+            }
           }
         } else {
           const u = entity.tripUpdate;
@@ -191,7 +227,16 @@ export async function pollBuses(
         }
       }
       if (kind === "tripUpdates") frame.tripUpdates = updates;
-      else frame.positions = positions;
+      else {
+        for (const [feed, batch] of byFeed) {
+          try {
+            await paths.align(feed, batch);
+          } catch {
+            status.error = "Route geometry unavailable";
+          }
+        }
+        frame.positions = positions;
+      }
       frame.feeds[kind] = status;
     } catch (e) {
       const detail =
@@ -238,6 +283,7 @@ export const historyKey = (version: string, stamp: number) =>
   `bus:${version}:${stamp}`;
 
 export class BusPoller implements DurableObject {
+  private paths?: BusPaths;
   constructor(
     private state: DurableObjectState,
     private env: Env,
@@ -265,6 +311,8 @@ export class BusPoller implements DurableObject {
       );
       const latest = latestKey(net.networkVersion);
       const old = await this.env.SNAPSHOT.get<BusLive>(latest, "json");
+      if (this.paths?.version !== net.networkVersion)
+        this.paths = new BusPaths(net.networkVersion, load);
       const frame = await pollBuses(
         release,
         load,
@@ -280,6 +328,7 @@ export class BusPoller implements DurableObject {
         },
         now,
         old ?? undefined,
+        this.paths,
       );
       // KV reads can lag a poll. Keep cancellation expiry in the singleton's
       // strongly consistent storage so a later full dataset cannot revive a trip.

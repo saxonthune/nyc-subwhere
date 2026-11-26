@@ -64,6 +64,8 @@ export interface BusUpdate {
 export interface BusPosition {
   /** Reported degrees clockwise from true north, when available. */
   bearing?: number;
+  /** Local direction of travel on the matched scheduled trip shape, clockwise from north. */
+  routeBearing?: number;
   tripKey: string;
   vehicleId: string;
   observedAt: number;

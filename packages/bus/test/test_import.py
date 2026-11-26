@@ -9,7 +9,7 @@ import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from build_network import FEEDS, build, bucket
+from build_network import FEEDS, build, bucket, trip_path
 
 
 def fixture_archive(path, feed, start, end):
@@ -28,6 +28,17 @@ def fixture_archive(path, feed, start, end):
 
 
 class Publication(unittest.TestCase):
+    def test_anchor_order_resolves_reversed_geometry_and_return_visit(self):
+        points = [[-74.0, 40.7], [-73.999, 40.7], [-73.998, 40.7]]
+        stops = {k: dict(lon=p[0], lat=p[1]) for k,p in zip("abc",points)}
+        visits = [(1,"c","c"),(2,"b","b"),(3,"a","a")]
+        path = trip_path("street",points,visits,stops)
+        self.assertTrue(path["reverse"])
+        self.assertEqual([s[2] for s in path["stops"]],[2,1,0])
+        loop = trip_path("loop",points+points[-2::-1],[(1,"a","a"),(2,"c","c"),(3,"a","a")],stops)
+        self.assertFalse(loop["reverse"])
+        self.assertEqual([s[2] for s in loop["stops"]],[0,2,4])
+
     def test_two_quarters_collision_exceptions_and_invalid_refresh(self):
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
             source, output = Path(tmp)/"inputs",Path(tmp)/"output"
@@ -50,6 +61,9 @@ class Publication(unittest.TestCase):
                 self.assertEqual(len(shared),5)
                 curbs=json.loads((folder/"curbs.json").read_bytes())
                 self.assertEqual(next(c["sources"] for c in curbs if c["stopId"]=="q:17"),[["q","17"]])
+                matches=json.loads((folder/"services/q:s.json").read_bytes())
+                shape_asset=json.loads((folder/"shapes-q.json").read_bytes())
+                self.assertEqual(shape_asset["tripPaths"][matches["t"][2]]["shapeId"],"line")
                 line=json.loads((folder/"routes/q-R.json").read_bytes())
                 self.assertEqual(line["patterns"][0],[["q:17",1,0,1],["q:18",3,1,0],["q:17",5,1,0]])
             before=(output/"catalog.json").read_bytes()

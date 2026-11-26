@@ -121,6 +121,45 @@ def intern(value, index, values):
     return index[value]
 
 
+def ordered_anchors(distances, reverse):
+    """Least total curb-to-vertex error with visits ordered along the shape."""
+    count = len(distances[0])
+    order = range(count - 1, -1, -1) if reverse else range(count)
+    previous = distances[0]
+    back = []
+    for row in distances[1:]:
+        best = order[0]
+        parents = [0] * count
+        costs = [0.0] * count
+        for i in order:
+            if previous[i] < previous[best]:
+                best = i
+            parents[i] = best
+            costs[i] = previous[best] + row[i]
+        back.append(parents)
+        previous = costs
+    last = min(order, key=previous.__getitem__)
+    cost = previous[last]
+    anchors = [last]
+    for parents in reversed(back):
+        last = parents[last]
+        anchors.append(last)
+    return cost, list(reversed(anchors))
+
+
+def trip_path(shape_id, points, visits, stops):
+    distances = []
+    for _, _, curb in visits:
+        stop = stops[curb]
+        distances.append([((lon-stop["lon"])*84000)**2 + ((lat-stop["lat"])*111000)**2 for lon, lat in points])
+    forward_cost, forward = ordered_anchors(distances, False)
+    reverse_cost, backward = ordered_anchors(distances, True)
+    reverse = reverse_cost < forward_cost
+    anchors = backward if reverse else forward
+    return dict(shapeId=shape_id, reverse=reverse,
+                stops=[[seq, raw, vertex] for (seq, raw, _), vertex in zip(visits, anchors)])
+
+
 def build_feed(archive, feed, folder, days, stops, by_stop, curbs_by_raw):
     valid = calendar(archive, feed, days)
     aliases = add_stops(archive, feed, stops, curbs_by_raw)
@@ -131,6 +170,7 @@ def build_feed(archive, feed, folder, days, stops, by_stop, curbs_by_raw):
     pattern_index, offset_index = collections.defaultdict(dict), collections.defaultdict(dict)
     matches = collections.defaultdict(dict)
     shape_routes = collections.defaultdict(set)
+    path_index, paths = {}, []
     max_seconds = 0
     count = 0
     for trip_id, group in itertools.groupby(rows(archive, "stop_times"), key=lambda r:r["trip_id"]):
@@ -155,7 +195,10 @@ def build_feed(archive, feed, folder, days, stops, by_stop, curbs_by_raw):
         pattern = intern(tuple(visits), pattern_index[route], table["patterns"])
         offsets = intern(tuple(t-times[0] for t in times), offset_index[route], table["offsets"])
         table["trips"].append([trip_id, feed+":"+service, trip["trip_headsign"], pattern, offsets, times[0]])
-        matches[service][trip_id] = [route,times[-1]]
+        shape_id = trip["shape_id"]
+        path_stops = tuple((visit[1], call["stop_id"], visit[0]) for visit, call in zip(visits, calls))
+        path = intern((shape_id, path_stops), path_index, paths)
+        matches[service][trip_id] = [route, times[-1], path]
         shape_routes[trip["shape_id"]].add(route)
         max_seconds = max(max_seconds, times[-1])
         count += len(visits)
@@ -170,12 +213,17 @@ def build_feed(archive, feed, folder, days, stops, by_stop, curbs_by_raw):
         if r["shape_id"] in shape_routes:
             shapes[r["shape_id"]].append((int(r["shape_pt_sequence"]),float(r["shape_pt_lon"]),float(r["shape_pt_lat"])))
     features = []
+    geometry = {}
     for shape, routes_using in shape_routes.items():
         points = [[lon,lat] for _,lon,lat in sorted(shapes[shape])]
         if len(points)<2:
             raise ValueError(f"Missing geometry for {shape}")
+        geometry[shape] = points
         features.append(dict(type="Feature",properties=dict(feed=feed,shapeId=shape,routeIds=sorted(routes_using)),geometry=dict(type="LineString",coordinates=points)))
-    dump(folder/("shapes-"+feed+".json"),dict(type="FeatureCollection",features=features))
+    # A GeoJSON foreign member carries feed-local path references for the poller.
+    # Each geometry is stored once even when several stop patterns use it.
+    direction_paths = [trip_path(shape, geometry[shape], visits, stops) for shape, visits in paths]
+    dump(folder/("shapes-"+feed+".json"),dict(type="FeatureCollection",features=features,tripPaths=direction_paths))
     print(f"{feed}: {total_trips} trips, {count} calls, {len(tables)} routes", flush=True)
     return max_seconds
 
