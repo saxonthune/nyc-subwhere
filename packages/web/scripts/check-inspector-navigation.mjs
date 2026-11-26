@@ -71,7 +71,24 @@ try {
     const b = await bus.boundingBox();
     const k = await bike.boundingBox();
     assert.ok(b.x >= k.x + k.width);
-    assert.equal(await bus.locator("svg").isVisible(), width < 480);
+    assert.equal(await bus.locator("svg").isVisible(), width <= 480);
+    if (width <= 480) {
+      const controls = page
+        .getByRole("group", { name: "Map view" })
+        .getByRole("button");
+      for (const control of await controls.all()) {
+        const target = await control.boundingBox();
+        const icon = await control.locator("svg").boundingBox();
+        assert.ok(target && icon);
+        assert.ok(
+          Math.abs(icon.x + icon.width / 2 - target.x - target.width / 2) < 0.5,
+        );
+        assert.ok(
+          Math.abs(icon.y + icon.height / 2 - target.y - target.height / 2) <
+            0.5,
+        );
+      }
+    }
     await bus.click();
     await page.waitForFunction(() => window.__map.getLayer("bus-curbs"));
     assert.equal(await bus.getAttribute("aria-pressed"), "true");
