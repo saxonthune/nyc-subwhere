@@ -27,10 +27,14 @@ jobs:
       # Cheap gate against direct pushes that skipped PR CI.
       - run: pnpm typecheck
 
+      - run: python3 packages/bus/build_network.py --fetch
+
       # Worker serves packages/web/dist via its ASSETS binding, so build the web app first.
       - run: pnpm --filter @nyc-subwhere/web build
 
-      - run: pnpm --filter @nyc-subwhere/worker exec wrangler deploy
+      - run: |
+          python3 packages/bus/publish_network.py --remote
+          pnpm --filter @nyc-subwhere/worker exec wrangler deploy --var BUS_SCHEDULE_ARCHIVE:enabled --keep-vars
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

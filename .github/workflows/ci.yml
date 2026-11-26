@@ -21,6 +21,8 @@ jobs:
 
       - run: pnpm lint
 
+      - run: pnpm --filter @nyc-subwhere/bus test
+
       - run: pnpm typecheck
 
       - run: pnpm --filter @nyc-subwhere/web build

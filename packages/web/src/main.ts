@@ -24,6 +24,7 @@ import streetsUrl from "./assets/streets.json?url";
 import trackGraphUrl from "./assets/track-graph.json?url";
 import trackIndexUrl from "./assets/track-index.json?url";
 import { BikePanel } from "./bike-panel";
+import { BusOverlay } from "./buses";
 import { HeaderPanel } from "./header-panel";
 import {
   InspectorPanel,
@@ -598,7 +599,28 @@ map.on("load", async () => {
     openBikeIndex = null;
   });
 
+  const buses = new BusOverlay(map);
+  const busOption = {
+    label: "Show buses",
+    onSelect: () => {
+      buses.set(!buses.active);
+      busOption.label = buses.active ? "Hide buses" : "Show buses";
+      menu.open = false;
+      openPick = null;
+      syncInspector();
+      closeBikePanel();
+      menu.requestUpdate();
+    },
+  };
+  menu.options = [busOption, ...menu.options];
+
   map.on("click", (e) => {
+    if (buses.pick(e.point)) {
+      closeBikePanel();
+      openPick = null;
+      syncInspector();
+      return;
+    }
     const r = networkLayer.pick(e.point);
     if (r?.kind === "train" || r?.kind === "station") cancelNudge();
     if (r?.kind === "bikeStation") {
@@ -620,6 +642,10 @@ map.on("load", async () => {
   // inspector opened in Subway View must not linger over an inert Bike View.
   let viewMode: "subway" | "bike" = "subway";
   menu.onViewToggle = () => {
+    if (buses.active) {
+      buses.set(false);
+      busOption.label = "Show buses";
+    }
     viewMode = viewMode === "subway" ? "bike" : "subway";
     menu.viewMode = viewMode;
     networkLayer.setViewMode(viewMode);

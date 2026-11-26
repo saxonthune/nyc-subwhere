@@ -10,6 +10,7 @@ port = 8788
 [assets]
 directory = "../web/dist"
 binding = "ASSETS"
+run_worker_first = ["/bus-data/*", "/api/bus/*"]
 
 # The finished render frame, republished every 30s by the FeedPoller (doc02.04)
 # and read straight back on /api/trips — the read path never decodes feeds.
@@ -37,3 +38,11 @@ new_sqlite_classes = ["FeedPoller"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["BikePoller"]
+
+[[durable_objects.bindings]]
+name = "BUS_POLLER"
+class_name = "BusPoller"
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["BusPoller"]

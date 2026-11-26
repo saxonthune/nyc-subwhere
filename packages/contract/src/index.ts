@@ -1,3 +1,4 @@
+export type * from "./bus";
 // --- Live render frame (doc02.04) ---------------------------------------
 // The frame the worker ships each poll and the web app renders on top of the
 // baked geometry below. See doc01.01 (glossary) for terms, doc02.04 (backend)
