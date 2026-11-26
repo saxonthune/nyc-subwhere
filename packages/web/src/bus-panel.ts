@@ -9,6 +9,8 @@ import type {
 import { LitElement, css, html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 
+import { recenterIcon } from "./icons";
+
 const clock = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
   hour: "numeric",
@@ -84,6 +86,11 @@ export class BusPanel extends LitElement {
       padding: 5px 9px;
       font-size: 13px;
     }
+    header { align-items:center; }
+    .actions { display:flex; flex:none; align-items:center; gap:6px; }
+    .actions .action { min-height:32px; }
+    .recenter { width:32px; padding:0; display:grid; place-items:center; }
+    .recenter:disabled { opacity:0.55; cursor:default; }
     .list {
       list-style: none;
       margin: 8px 0 0;
@@ -149,6 +156,7 @@ export class BusPanel extends LitElement {
   names = new Map<string, BusCurb>();
   vehicles = new Map<string, BusPosition>();
   onClose = () => {};
+  onCenter = (_point: BusCurb | BusPosition) => {};
   onStop = (_id: string) => {};
   onTrip = (_key: string) => {};
   onMore = () => {};
@@ -180,7 +188,22 @@ export class BusPanel extends LitElement {
         : trip
           ? `${trip.routeName} trip`
           : "Bus details");
-    return html`<section aria-label="Bus details"><header><h2>${title}</h2><button class="action" @click=${this.onClose} aria-label="Close bus details">Close</button></header>
+    const target =
+      this.curb ?? (this.tripKey ? this.vehicles.get(this.tripKey) : undefined);
+    const centerLabel = this.curb ? "Center bus stop" : "Center bus";
+    return html`<section aria-label="Bus details">
+    <header><h2>${title}</h2><div class="actions">
+      ${
+        this.curb || this.tripKey
+          ? html`<button class="action recenter" aria-label=${centerLabel}
+        title=${target ? centerLabel : "No live bus position"} ?disabled=${!target}
+        @click=${() => {
+          if (target) this.onCenter(target);
+        }}>${recenterIcon}</button>`
+          : nothing
+      }
+      <button class="action" @click=${this.onClose} aria-label="Close bus details">Close</button>
+    </div></header>
     ${this.status ? html`<p role="status">${this.status}</p>` : nothing}
     ${
       trip

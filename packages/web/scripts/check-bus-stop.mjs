@@ -12,6 +12,62 @@ const browser = await chromium.launch({
     "--ignore-gpu-blocklist",
   ],
 });
+// Pan away first. Both buttons must bring the target back into the open map
+// without closing its inspector or resetting the camera zoom and rotation.
+async function verifyRecenter(page, label, target) {
+  const button = page.getByRole("button", { name: label, exact: true });
+  const close = page.getByRole("button", { name: "Close bus details" });
+  const icon = await button.boundingBox();
+  const closeBox = await close.boundingBox();
+  assert.ok(
+    icon &&
+      closeBox &&
+      icon.x + icon.width <= closeBox.x &&
+      Math.abs(icon.y - closeBox.y) < 3,
+  );
+  await page.evaluate(() => window.__map.panBy([100, 90], { duration: 0 }));
+  const box = await page.locator("bus-panel section").boundingBox();
+  const { width, height } = page.viewportSize();
+  const leftArea = box.x * height;
+  const upperArea = box.y * width;
+  const expected =
+    leftArea > upperArea ? [box.x / 2, height / 2] : [width / 2, box.y / 2];
+  const coords =
+    typeof target === "string"
+      ? await page.evaluate(
+          (key) =>
+            window.__map
+              .getSource("bus-vehicles")
+              .serialize()
+              .data.features.find((f) => f.properties.tripKey === key).geometry
+              .coordinates,
+          target,
+        )
+      : target;
+  const before = await page.evaluate(() => [
+    window.__map.getZoom(),
+    window.__map.getPitch(),
+    window.__map.getBearing(),
+  ]);
+  await button.click();
+  await page.waitForFunction(
+    ({ coords, expected }) => {
+      const p = window.__map.project(coords);
+      return Math.abs(p.x - expected[0]) < 4 && Math.abs(p.y - expected[1]) < 4;
+    },
+    { coords, expected },
+    { timeout: 8000 },
+  );
+  assert.deepEqual(
+    await page.evaluate(() => [
+      window.__map.getZoom(),
+      window.__map.getPitch(),
+      window.__map.getBearing(),
+    ]),
+    before,
+  );
+  console.log(label, "verified at", expected.map(Math.round));
+}
 try {
   const width = Number(process.env.BUS_SCREEN_WIDTH ?? 1050);
   const height = 760;
@@ -119,6 +175,7 @@ try {
         inspected.vehicle.vehicleId.split("_").at(-1),
       ),
     );
+    await verifyRecenter(page, "Center bus", inspected.tripKey);
     if (process.env.BUS_TRIP_SCREENSHOT)
       await page.screenshot({ path: process.env.BUS_TRIP_SCREENSHOT });
     const call = inspected.calls[1];
@@ -203,6 +260,7 @@ try {
       new Date(call.time).toISOString(),
     );
   }
+  await verifyRecenter(page, "Center bus stop", [stop.lon, stop.lat]);
   const panel = page.locator("bus-panel section");
   const distinct = () =>
     panel.evaluate((e) => {
@@ -232,6 +290,32 @@ try {
     }),
   );
   await page.getByRole("button", { name: "Close bus details" }).click();
+  if (process.env.BUS_ACTIVITY_SCREENSHOT) {
+    const nearest = stops
+      .filter((s) => !activeStops.has(s.stopId))
+      .sort(
+        (a, b) =>
+          Math.hypot((a.lon - stop.lon) * 0.76, a.lat - stop.lat) -
+          Math.hypot((b.lon - stop.lon) * 0.76, b.lat - stop.lat),
+      )[0];
+    if (nearest) {
+      await page.evaluate(
+        (c) =>
+          window.__map.jumpTo({ center: c, zoom: 15.7, pitch: 0, bearing: 15 }),
+        [nearest.lon, nearest.lat],
+      );
+      await page.waitForFunction(
+        (id) =>
+          window.__map
+            .queryRenderedFeatures([innerWidth / 2, innerHeight / 2], {
+              layers: ["bus-curbs"],
+            })
+            .some((f) => f.properties.stopId === id && f.state.inactive),
+        nearest.stopId,
+      );
+      await page.screenshot({ path: process.env.BUS_ACTIVITY_SCREENSHOT });
+    }
+  }
   await page.getByRole("button", { name: "Bike view", exact: true }).click();
   assert.equal(
     await page.evaluate(() => Boolean(window.__map.getLayer("bus-curbs"))),

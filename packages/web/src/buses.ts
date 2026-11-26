@@ -31,8 +31,9 @@ const busColors = {
   curb: "#dccbfa",
   curbRim: "#45385c",
   selectedCurb: "#ffffff",
-  inactiveRoute: "#8a939e",
-  inactiveCurb: "#bfc5cd",
+  inactiveRoute: "#b48143",
+  inactiveCurb: "#362c24",
+  inactiveRim: "#e6ab61",
   vehicle: "#60f5ed",
   vehicleRim: "#134a53",
   chevron: "#148d99",
@@ -97,6 +98,19 @@ export class BusOverlay {
   constructor(private map: CityMap) {
     document.body.append(this.panel);
     this.panel.onClose = () => this.clear();
+    this.panel.onCenter = ({ lon, lat }) => {
+      const map = this.map.getContainer().getBoundingClientRect();
+      const panel = this.panel.getBoundingClientRect();
+      // The panel is docked at bottom right. Center in whichever uninterrupted
+      // rectangle has more room: beside it on wide screens, above it on phones.
+      const left = Math.max(0, Math.min(map.width, panel.left - map.left));
+      const above = Math.max(0, Math.min(map.height, panel.top - map.top));
+      const offset: [number, number] =
+        left * map.height > above * map.width
+          ? [(left - map.width) / 2, 0]
+          : [0, (above - map.height) / 2];
+      this.map.easeTo({ center: [lon, lat], offset });
+    };
     this.panel.onStop = (id) => {
       const curb = this.panel.names.get(id);
       if (curb) {
@@ -175,7 +189,7 @@ export class BusOverlay {
         this.layers.push(id);
         this.shapeLayers.set(url, { source: id });
       }
-      // Draw active shapes above every grey shape, including overlapping feeds.
+      // Draw active shapes above every inactive shape, including overlapping feeds.
       for (const { source } of this.shapeLayers.values()) {
         const id = `${source}-active`;
         this.map.addLayer({
@@ -188,7 +202,7 @@ export class BusOverlay {
             "line-opacity": [
               "case",
               ["boolean", ["feature-state", "active"], false],
-              0.8,
+              1,
               0,
             ],
           },
@@ -231,8 +245,18 @@ export class BusOverlay {
             busColors.inactiveCurb,
             busColors.curb,
           ],
-          "circle-stroke-color": busColors.curbRim,
-          "circle-stroke-width": 1,
+          "circle-stroke-color": [
+            "case",
+            ["boolean", ["feature-state", "inactive"], false],
+            busColors.inactiveRim,
+            busColors.curbRim,
+          ],
+          "circle-stroke-width": [
+            "case",
+            ["boolean", ["feature-state", "inactive"], false],
+            1.5,
+            1,
+          ],
         },
       });
       this.layers.push("bus-curbs");
