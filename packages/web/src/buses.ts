@@ -9,6 +9,53 @@ import { LitElement, css, html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import type { Map as CityMap, GeoJSONSource, PointLike } from "maplibre-gl";
 
+const busColors = {
+  route: "#18b8df",
+  curb: "#a2e5f0",
+  curbRim: "#124455",
+  selectedCurb: "#ffffff",
+  vehicle: "#ffc374",
+  vehicleRim: "#533725",
+  chevron: "#ad702f",
+};
+
+// A north-facing sprite, shared by every vehicle and rotated by the symbol layer.
+function registerBusSprites(map: CityMap) {
+  const scale = 3;
+  for (const directed of [true, false]) {
+    const id = directed ? "bus-forward" : "bus-no-heading";
+    if (map.hasImage(id)) continue;
+    const canvas = document.createElement("canvas");
+    canvas.width = 12 * scale;
+    canvas.height = 22 * scale;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Cannot draw bus marker");
+    ctx.scale(scale, scale);
+    ctx.fillStyle = busColors.vehicleRim;
+    ctx.beginPath();
+    ctx.roundRect(0, 0, 12, 22, 2.5);
+    ctx.fill();
+    ctx.fillStyle = busColors.vehicle;
+    ctx.beginPath();
+    ctx.roundRect(1, 1, 10, 20, 1.5);
+    ctx.fill();
+    if (directed) {
+      ctx.strokeStyle = busColors.chevron;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(3, 8);
+      ctx.lineTo(6, 5);
+      ctx.lineTo(9, 8);
+      ctx.stroke();
+    }
+    map.addImage(id, ctx.getImageData(0, 0, canvas.width, canvas.height), {
+      pixelRatio: scale,
+    });
+  }
+}
+
 const clock = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
   hour: "numeric",
@@ -71,7 +118,7 @@ export class BusOverlay {
   }
   private clear() {
     if (this.map.getLayer("bus-curbs"))
-      this.map.setPaintProperty("bus-curbs", "circle-color", "#ffda92");
+      this.map.setPaintProperty("bus-curbs", "circle-color", busColors.curb);
     this.lookup++;
     this.panel.rows = undefined;
     this.panel.curb = undefined;
@@ -108,8 +155,18 @@ export class BusOverlay {
           type: "line",
           source: id,
           paint: {
-            "line-color": "#ecac5e",
-            "line-width": 2,
+            "line-color": busColors.route,
+            "line-width": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              10,
+              0.9,
+              15,
+              1.8,
+              18,
+              2.6,
+            ],
             "line-opacity": 0.72,
           },
         });
@@ -136,31 +193,50 @@ export class BusOverlay {
             ["linear"],
             ["zoom"],
             10,
-            2,
+            1.5,
             15,
-            5,
+            3.8,
             18,
-            8,
+            6.5,
           ],
-          "circle-color": "#ffda92",
-          "circle-stroke-color": "#553814",
-          "circle-stroke-width": 1.5,
+          "circle-color": busColors.curb,
+          "circle-stroke-color": busColors.curbRim,
+          "circle-stroke-width": 1,
         },
       });
       this.layers.push("bus-curbs");
+      registerBusSprites(this.map);
       this.map.addSource("bus-vehicles", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
       });
       this.map.addLayer({
         id: "bus-vehicles",
-        type: "circle",
+        type: "symbol",
         source: "bus-vehicles",
-        paint: {
-          "circle-radius": 6,
-          "circle-color": "#68f2d5",
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#143f48",
+        layout: {
+          "icon-image": [
+            "case",
+            ["has", "bearing"],
+            "bus-forward",
+            "bus-no-heading",
+          ],
+          "icon-size": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            10,
+            0.65,
+            14,
+            0.9,
+            18,
+            1.2,
+          ],
+          "icon-rotate": ["coalesce", ["get", "bearing"], 0],
+          "icon-rotation-alignment": "map",
+          "icon-pitch-alignment": "map",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
         },
       });
       this.layers.push("bus-vehicles");
@@ -208,6 +284,7 @@ export class BusOverlay {
           tripKey: p.tripKey,
           vehicleId: p.vehicleId,
           observedAt: p.observedAt,
+          ...(p.bearing != null ? { bearing: p.bearing } : {}),
         },
         geometry: { type: "Point", coordinates: [p.lon, p.lat] },
       })),
@@ -232,8 +309,8 @@ export class BusOverlay {
     this.map.setPaintProperty("bus-curbs", "circle-color", [
       "case",
       ["==", ["get", "stopId"], curb.stopId],
-      "#ffffff",
-      "#ffda92",
+      busColors.selectedCurb,
+      busColors.curb,
     ]);
     if (this.panel.curb?.stopId !== curb.stopId) {
       this.panel.rows = undefined;

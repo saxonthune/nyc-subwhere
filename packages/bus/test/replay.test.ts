@@ -99,6 +99,30 @@ const vehicles = message([
     },
   },
 ]);
+test("vehicle bearings distinguish true north from an absent or invalid direction", async () => {
+  const bearings = [0, 90, 360, undefined, -1];
+  const bytes = message(
+    bearings.map((bearing, index) => ({
+      id: String(index),
+      vehicle: {
+        trip: descriptor("early"),
+        vehicle: { id: String(index) },
+        position: { latitude: 40.7, longitude: -74, bearing },
+        timestamp: now / 1000,
+      },
+    })),
+  );
+  const frame = await pollBuses(
+    release,
+    load,
+    async (kind) => (kind === "vehiclePositions" ? bytes : updates),
+    now,
+  );
+  assert.deepEqual(
+    frame.positions.map((p) => p.bearing),
+    [0, 90, 0, undefined, undefined],
+  );
+});
 test("wire replay reconciles live and scheduled calls, preserves valid cancellations across failures", async () => {
   const frame = await pollBuses(
     release,

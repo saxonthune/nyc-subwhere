@@ -62,6 +62,8 @@ export interface BusUpdate {
   calls: BusPrediction[];
 }
 export interface BusPosition {
+  /** Reported degrees clockwise from true north, when available. */
+  bearing?: number;
   tripKey: string;
   vehicleId: string;
   observedAt: number;

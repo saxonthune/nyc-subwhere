@@ -139,14 +139,24 @@ export async function pollBuses(
         status.matched++;
         if (kind === "vehiclePositions") {
           const v = entity.vehicle;
-          if (v?.position && v.vehicle?.id)
+          if (v?.position && v.vehicle?.id) {
+            // Protobuf supplies a default zero even when the feed omits bearing.
+            const bearing = v.position.bearing;
+            const hasBearing =
+              present(v.position, "bearing") &&
+              typeof bearing === "number" &&
+              Number.isFinite(bearing) &&
+              bearing >= 0 &&
+              bearing <= 360;
             positions.push({
+              bearing: hasBearing ? bearing % 360 : undefined,
               tripKey: m.key,
               vehicleId: v.vehicle.id,
               lat: v.position.latitude,
               lon: v.position.longitude,
               observedAt,
             });
+          }
         } else {
           const u = entity.tripUpdate;
           if (!u) continue;
